@@ -1,0 +1,21 @@
+{
+  "initial_ocr": {
+    "skip_keys": [],
+    "use_gpu": true,
+    "diff_thresh": 3.0
+  },
+  "post_ocr": {
+    "boundary_shift_sec": -1.0,
+    "stable_frames": 3,
+    "min_breath_sec": 1.0,
+    "abnormal_screen_diff": 8.0,
+    "wave_split": true,
+    "split_flow": 5.0,
+    "split_lead_sec": 0.4,
+    "split_insp_sec": 0.15,
+    "split_min_insp_ml": 50.0,
+    "exhaled_ml": 30.0,
+    "exhaled_frac": 0.1,
+    "trim_to_breath": true
+  }
+}
