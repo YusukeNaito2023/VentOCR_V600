@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 0.1.1 (2026-10-21)
+解析の結果は 0.1.0 と同じ。manifest.json に出力の宣言 `outputs` を足した（VentOCR 0.6.2 から。ENGINE_API.md §8.1）。
+- waves: Pressure（cmH2O、縦軸は P_min / P_max）・Flow（L/min、F_min / F_max）・Volume（mL、V_min / V_max）。色・単位・縦軸は VentOCR 0.6.1 までの見え方と同じ
+- breath_values: VT・VT_displayed（今までの breath_summary・labels・単位と同じ）
+- `ventocr_min` を 0.6.2 に（それより古いアプリは宣言を読めない）
+
 ## 0.1.0 (2026-10-19)
 旧 v0.3.0 と中身は同じ。版の付け方を 0.X.Y に改めた（古い版のタグは削除）。
 
