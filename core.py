@@ -20,7 +20,7 @@ from tqdm import tqdm
 
 from . import Settings
 
-ENGINE_VERSION = "0.1.1"
+ENGINE_VERSION = "0.1.2"
 VENTOCR_TESTED = "0.5.5"
 
 ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))

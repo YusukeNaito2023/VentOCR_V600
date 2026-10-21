@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## 0.1.2 (2026-10-21)
+解析の結果は 0.1.1 と同じ。チャートの1段目（outputs.waves の Pressure）の表示名を「Paw」に（列の名前は Pressure のまま）。
+
 ## 0.1.1 (2026-10-21)
 解析の結果は 0.1.0 と同じ。manifest.json に出力の宣言 `outputs` を足した（VentOCR 0.6.2 から。ENGINE_API.md §8.1）。
 - waves: Pressure（cmH2O、縦軸は P_min / P_max）・Flow（L/min、F_min / F_max）・Volume（mL、V_min / V_max）。色・単位・縦軸は VentOCR 0.6.1 までの見え方と同じ

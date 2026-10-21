@@ -2,7 +2,7 @@
   "engine_key": "V600_ventocr",
   "display_name": "V600",
   "developer": "VentOCR Developer Team",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "ventocr_min": "0.6.2",
   "description": "Draeger Savina 300 / V600 ventilator OCR engine. Breath = display update of VT. Waveforms: Pressure, Flow, Volume (filled curves) with wrap-around sweep tracked frame by frame; y-axis scale read by OCR.",
 
@@ -23,7 +23,7 @@
 
   "outputs": {
     "waves": [
-      { "name": "Pressure", "unit": "cmH2O", "color": "#d62728", "scale": { "min": "P_min", "max": "P_max" } },
+      { "name": "Pressure", "label": "Paw", "unit": "cmH2O", "color": "#d62728", "scale": { "min": "P_min", "max": "P_max" } },
       { "name": "Flow",     "unit": "L/min", "color": "#1f77b4", "scale": { "min": "F_min", "max": "F_max" } },
       { "name": "Volume",   "unit": "mL",    "color": "#2ca02c", "scale": { "min": "V_min", "max": "V_max" } }
     ],
