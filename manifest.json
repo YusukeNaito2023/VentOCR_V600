@@ -2,8 +2,9 @@
   "engine_key": "V600_ventocr",
   "display_name": "V600",
   "developer": "VentOCR Developer Team",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "ventocr_min": "0.6.2",
+  "engine_api": 3,
   "description": "Draeger Savina 300 / V600 ventilator OCR engine. Breath = display update of VT. Waveforms: Pressure, Flow, Volume (filled curves) with wrap-around sweep tracked frame by frame; y-axis scale read by OCR.",
 
   "sample_video": "V600_Sample.mp4",
@@ -30,6 +31,14 @@
     "breath_values": [
       { "name": "VT",           "label": "VT",             "unit": "mL" },
       { "name": "VT_displayed", "label": "VT (displayed)", "unit": "mL" }
+    ],
+    "alerts": [
+      { "name": "Fragment", "label": { "ja": "録画の最初・最後で途中から始まる・切れている呼吸", "en": "Cut at the start or end of the recording" }, "exclude_from_accuracy": true },
+      { "name": "Abnormal", "label": { "ja": "ポップアップ・別の画面のフレームを含む", "en": "Contains popup or other-screen frames" }, "exclude_from_accuracy": true },
+      { "name": "Long",     "label": { "ja": "2周以上かかった呼吸で、最後の1周分だけ", "en": "Took more than one sweep; only the last sweep" }, "exclude_from_accuracy": false },
+      { "name": "Partial",  "label": { "ja": "波形の 3 割以上が空欄（画面の消去など）", "en": "More than 30% of the waveform missing (screen cleared, etc.)" }, "exclude_from_accuracy": true },
+      { "name": "RT?",      "label": { "ja": "吐き切る前に次の吸気が来た二峰性の呼吸（Reverse Triggering など）", "en": "Biphasic breath: next inspiration before full expiration (e.g. reverse triggering)" }, "exclude_from_accuracy": false },
+      { "name": "Merged?",  "label": { "ja": "長さが前後の呼吸の 1.7 倍以上（2 呼吸が 1 つになった疑い）", "en": "At least 1.7x the neighbouring breaths (possibly two breaths merged)" }, "exclude_from_accuracy": true }
     ]
   },
 

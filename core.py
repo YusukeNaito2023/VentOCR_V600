@@ -20,7 +20,7 @@ from tqdm import tqdm
 
 from . import Settings
 
-ENGINE_VERSION = "0.1.2"
+ENGINE_VERSION = "0.2.0"
 VENTOCR_TESTED = "0.5.5"
 
 ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -322,9 +322,12 @@ def track_sweep(sweep_raw, fps):
 
     # 速さ: 折り返しでない隣どうしの進み（0 <= d < 30）の近傍平均
     # （収録のフレーム間隔の揺らぎで 4px と 6px が交互に出るので、中央値ではなく平均）
+    # 0.2.0: 窓の幅（フレーム数）と1フレームの進みの上限は fps から求める（10 fps で 0.1.x と同じ 101 / 5 フレーム・30px）
     d = np.diff(pen)
-    step = np.where((d >= 0) & (d < 30), d, np.nan)
-    s_ser = pd.Series(np.r_[step, np.nan]).rolling(101, center=True, min_periods=5).mean().to_numpy()
+    max_step = 30.0 * max(1.0, 10.0 / fps)
+    step = np.where((d >= 0) & (d < max_step), d, np.nan)
+    win = int(round(10.1 * fps)) | 1
+    s_ser = pd.Series(np.r_[step, np.nan]).rolling(win, center=True, min_periods=max(2, round(0.5 * fps))).mean().to_numpy()
     speed = np.where(np.isfinite(s_ser), s_ser, np.nanmean(step) if np.isfinite(step).any() else default_speed)
 
     # 通しの位置: 普段はペン先の進みをそのまま足す。左端に戻ったフレームはその時点の速さだけ進めたとみなす
@@ -338,7 +341,7 @@ def track_sweep(sweep_raw, fps):
 # post_ocr
 # ============================================================
 
-SCALE_VOTE_FRAMES = 5
+SCALE_VOTE_SEC = 0.5   # 0.2.0: 目盛りの多数決に使う呼吸の最後の時間（10 fps で 0.1.x と同じ 5 フレーム）
 
 
 def _mode(series):
@@ -457,8 +460,9 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
         row["Alert"] = ",".join(dict.fromkeys(alerts))
         row["Abnormal"] = int(g["Abnormal"].any())
         # 縦軸のスケール = 波形を切り出す最後のフレームのもの。1フレームの誤読（100→25 など）で呼吸全体が
-        # 狂わないよう、最後の SCALE_VOTE_FRAMES フレーム（正常なもの）の多数決にする。読めなければ直前の呼吸の値
-        tail = normal.tail(SCALE_VOTE_FRAMES) if len(normal) else g.tail(SCALE_VOTE_FRAMES)
+        # 狂わないよう、最後の SCALE_VOTE_SEC 秒のフレーム（正常なもの）の多数決にする。読めなければ直前の呼吸の値
+        n_vote = max(1, round(SCALE_VOTE_SEC * fps))
+        tail = normal.tail(n_vote) if len(normal) else g.tail(n_vote)
         for name, spec in Settings.WAVES.items():
             col = f"Scale_{name}"
             vmax = pd.to_numeric(tail[col], errors="coerce") if col in df else pd.Series(dtype=float)
