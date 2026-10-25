@@ -1,51 +1,51 @@
 # V600 VentOCR Engine
 
 ## Supported Devices
-- Dräger Savina 300 / V600（右に VT・MV・呼吸回数・リーク%、左に 気道内圧 / フロー / ボリュームの3波形が並ぶ画面）
-- 3840x2160 または 1920x1080 で収録した動画（1920x1080 に縮小してから読む）
+- Dräger Savina 300 / V600 (screen with VT, MV, respiratory rate, and leak % on the right, and three waveforms — airway pressure / flow / volume — on the left)
+- Videos recorded at 3840x2160 or 1920x1080 (downscaled to 1920x1080 before reading)
 
 ## Description
-- **1呼吸** = VT の表示が更新されてから、次に更新されるまで
-  - 表示の更新は吸気の始まりより約0.6秒遅れるので、区切りは更新の `boundary_shift_sec`（既定 -1.0秒）前に置く（吸気の約0.4秒前で切れる）
-  - 新しい値が `stable_frames`（既定3）フレーム以上続いたときだけ更新とみなす（1〜2フレームの読み違いを無視）
-- **波形で補う区切り**（`wave_split`、既定で有効）: VT が前の呼吸と同じ値だと表示の更新が見えず、2呼吸が1つになる。
-  1呼吸の波形の中に2つ目の吸気の立ち上がり（フロー > `split_flow` 5 L/min）があり、その直前にボリュームが
-  基線まで戻っていれば（吐き切っていれば）別の呼吸として区切る（立ち上がりの `split_lead_sec` 0.4秒前）。
-  - 吐き切った = 直前0.2秒のボリューム ≤ max(`exhaled_ml` 30 mL, `exhaled_frac` 0.1 × 直前の最大ボリューム)
-  - 吐き切る前に次の吸気が来たもの（Reverse Triggering などの二峰性の1呼吸）は区切らず、Alert に `RT?`
-  - 新しい吸気のボリュームが `split_min_insp_ml`（50 mL）未満の立ち上がりは無視する
-  - 区切った呼吸は Breaths.csv の `Boundary` が `Waveform`（VT の更新で区切った呼吸は `VT`、最初の呼吸は `Start`）。
-    VT は区切る前の呼吸と同じ値（表示が変わらなかったため）
-  - 呼吸番号は時間順に振り直す（Frames.csv の BreathNumber も合わせる）
-- **OCR**: VT（リーク補正）。画面の VT は「直前の呼吸」の値なので、Breaths.csv の `VT` は次の呼吸の間に表示される値、
-  `VT_displayed` はその呼吸の間に表示されていた値
-- **波形**: Pressure、Flow、Volume。BreathCSVs/<n>.csv の列は X, Pressure, Flow, Volume
-  - 波形は基線から値まで塗りつぶして描かれる（強制換気は濃い青、自発呼吸は薄い青）。各列の値 = 基線から最も遠い塗りの端
-  - 縦軸のスケール（フロー ±100/±50、ボリューム 1000/500 など）は画面で変えられ、過去の波形も描き直される。
-    縦軸の最大値の数字を OCR し、呼吸ごとに波形を切り出したフレームのスケールで換算する（Breaths.csv の P_/F_/V_min・max）
-- **掃引**: 左から右へ描き、左端に戻って上書きする（wrap around）。戻る位置と速さが一定でないため、毎フレームのペン先を追跡する
-  - 右端（x=1362）に達したとき、または x≈1100 以降で次の呼吸が始まったときに左端（x=62）へ戻る（残りの右側は消去）
-  - 換気モードを変えると画面全体が消去される
-  - 速さはモードで変わる（サンプルでは 52 px/秒、PC-BIPAP の区間は 64 px/秒）
-  - ペン先 = 気道内圧の帯で、塗りの無い列（消去帯、幅約41px）の左端の1つ手前
-  - 各点の時刻 = `Wave_T0` + 行番号 / `Wave_Rate`（Breaths.csv）
+- **1 breath** = from one update of the VT display until the next update
+  - The display update lags the start of inspiration by about 0.6 s, so the boundary is placed `boundary_shift_sec` (default -1.0 s) before the update (cutting about 0.4 s before inspiration)
+  - A change counts as an update only when the new value lasts at least `stable_frames` (default 3) frames (misreads of 1-2 frames are ignored)
+- **Waveform-based splits** (`wave_split`, enabled by default): if VT has the same value as the previous breath, the display update is not visible and two breaths merge into one.
+  If a breath's waveform contains a second inspiratory onset (flow > `split_flow` 5 L/min) and the volume has returned
+  to baseline (fully exhaled) just before it, it is split off as a separate breath (`split_lead_sec` 0.4 s before the onset).
+  - Fully exhaled = volume over the preceding 0.2 s ≤ max(`exhaled_ml` 30 mL, `exhaled_frac` 0.1 × preceding max volume)
+  - If the next inspiration arrives before full exhalation (a single biphasic breath, e.g. Reverse Triggering), it is not split and Alert gets `RT?`
+  - Onsets whose new inspiratory volume is below `split_min_insp_ml` (50 mL) are ignored
+  - Split breaths have `Boundary` = `Waveform` in Breaths.csv (breaths split by a VT update have `VT`, and the first breath has `Start`).
+    VT is the same value as the breath before the split (because the display did not change)
+  - Breath numbers are reassigned in time order (BreathNumber in Frames.csv is updated to match)
+- **OCR**: VT (leak-compensated). The on-screen VT is the value of the "previous breath", so `VT` in Breaths.csv is the value displayed during the next breath,
+  and `VT_displayed` is the value that was displayed during that breath
+- **Waveforms**: Pressure, Flow, Volume. Columns of BreathCSVs/<n>.csv are X, Pressure, Flow, Volume
+  - Waveforms are drawn filled from the baseline to the value (mandatory breaths in dark blue, spontaneous breaths in light blue). Value of each column = the edge of the fill farthest from the baseline
+  - The vertical-axis scale (flow ±100/±50, volume 1000/500, etc.) can be changed on screen, and past waveforms are redrawn too.
+    The vertical-axis max number is OCR'd, and each breath is converted using the scale of the frame its waveform was cut from (P_/F_/V_min and max in Breaths.csv)
+- **Sweep**: drawn left to right, then returns to the left edge and overwrites (wrap around). The return position and speed are not constant, so the pen tip is tracked in every frame
+  - It returns to the left edge (x=62) when it reaches the right edge (x=1362), or when the next breath starts at x≈1100 or beyond (the remaining right side is erased)
+  - Changing the ventilation mode clears the whole screen
+  - The speed depends on the mode (52 px/s in the sample, 64 px/s in the PC-BIPAP segment)
+  - Pen tip = in the airway pressure band, one column before the left end of the unfilled columns (erase band, about 41px wide)
+  - Time of each point = `Wave_T0` + row index / `Wave_Rate` (Breaths.csv)
 
 ## Expected Layout
-See `layout.jpg`（赤枠: OCR、緑枠: 波形の帯、赤線: 基線、灰枠: 読まない範囲、青枠: 画面確認用の縦軸目盛り）。
+See `layout.jpg` (red boxes: OCR, green boxes: waveform bands, red lines: baselines, gray boxes: areas not read, blue box: vertical-axis ticks used for the screen check).
 
-## Alert（Breaths.csv）
-- `RT?`: 吐き切る前に次の吸気が来た二峰性の呼吸（Reverse Triggering など）。区切っていない
-- `Merged?`: 長さが前後の呼吸の中央値の1.7倍以上で、波形が無いため波形で区切れなかった呼吸
-  （波形を調べた呼吸は区切り済みなので付かない。残った長い呼吸は吸気が1回で、後に無呼吸がある）
-- `Abnormal`: 設定画面などのポップアップが波形の上に出ていた（波形は出力しない）
-- `Partial`: モード変更などで画面が消去され、波形の3割以上が残っていない
-- `Long`: 2回以上左端に戻った呼吸（最後の1周分だけ）
-- `Fragment`: 録画の最初と最後の呼吸
+## Alert (Breaths.csv)
+- `RT?`: biphasic breath where the next inspiration came before full exhalation (e.g. Reverse Triggering). Not split
+- `Merged?`: a breath at least 1.7x the median duration of the surrounding breaths that could not be split by waveform because it has no waveform
+  (not set on breaths whose waveform was examined, since those are already split; remaining long breaths have a single inspiration followed by apnea)
+- `Abnormal`: a popup such as a settings screen was shown over the waveforms (no waveform is output)
+- `Partial`: the screen was cleared (e.g. mode change) and 30% or more of the waveform is missing
+- `Long`: a breath that returned to the left edge two or more times (only the last sweep is used)
+- `Fragment`: the first and last breaths of the recording
 
 ## Limitations
-- VT が前の呼吸と同じ値のときは表示の更新が見えない。波形で補って区切る（サンプルでは8か所。PC-AC のように VT が安定していると起きやすい）
-- 気道内圧の縦軸の最小値は -5 で固定と仮定している（最大値は読み取る）。最大値 30 以外は未検証
-- PEEP 0（気道内圧の塗りが無い）ではペン先を検出できない
+- When VT has the same value as the previous breath, the display update is not visible. Breaths are split using the waveform instead (8 places in the sample; this happens more often when VT is stable, as in PC-AC)
+- The airway pressure vertical-axis minimum is assumed to be fixed at -5 (the maximum is read). Maximum values other than 30 are unverified
+- With PEEP 0 (no airway pressure fill), the pen tip cannot be detected
 
 ## Author
 - VentOCR Developer Team

@@ -1,13 +1,16 @@
 """Dräger V600 VentOCR Engine
 
-- 1呼吸 = VT の表示が更新されてから、次に更新されるまで
-- OCR: VT（リーク補正）
-- 波形: 気道内圧（Pressure）、フロー（Flow）、ボリューム（Volume）。基線から値までを塗りつぶした波形
+- 1 breath = from one update of the VT display until the next update
+- OCR: VT (leak-compensated)
+- Waveforms: airway pressure (Pressure), flow (Flow), volume (Volume). Each is drawn filled from the baseline to the value
 
-波形の画面は左から右へ掃引し、左端に戻って上書きする（wrap around）。ただし戻る位置・掃引の速さは一定でない
-（右端の手前で次の呼吸が始まると戻る、モード変更で全消去、モードで速さが変わる）ため、周期を仮定しない。
-各フレームでペン先（消去帯の左端）を検出し（initial_ocr）、折り返しを展開した通しの位置に直す（post_ocr）。
-呼吸の波形は、その呼吸の最後のフレームの画像から、開始時のペン先〜終了時のペン先の列を切り出す（extract_waves）。
+The waveform screen sweeps left to right, then returns to the left edge and overwrites (wrap around). However, the return
+position and sweep speed are not constant (it returns early if the next breath starts before the right edge, a mode change
+clears everything, and the speed depends on the mode), so no period is assumed.
+The pen tip (left edge of the erase band) is detected in each frame (initial_ocr) and converted to a continuous position
+with the wraps unrolled (post_ocr).
+Each breath's waveform is cut from the image of that breath's last frame, taking the columns from the pen tip at its start
+to the pen tip at its end (extract_waves).
 """
 import json
 import os
@@ -28,7 +31,7 @@ OCR_KEYS = list(Settings.ROIs)
 
 
 # ============================================================
-# EasyOCR初期化
+# EasyOCR initialization
 # ============================================================
 
 _EASYOCR_LOCKFILE = "easyocr_init.lock"
@@ -93,11 +96,11 @@ def _ensure_easyocr_reader_ready(gpu_enabled):
 
 
 # ============================================================
-# 共通
+# Common
 # ============================================================
 
 def _normalize_frame(frame):
-    """基準解像度（1920x1080）にそろえる。"""
+    """Resize to the base resolution (1920x1080)."""
     w, h = Settings.BASE_RESOLUTION
     if frame.shape[1] != w or frame.shape[0] != h:
         frame = cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
@@ -114,13 +117,13 @@ def _crop(img, roi):
 
 
 def _runs(mask):
-    """True が続く区間の (開始, 終了) のリスト（終了を含む）。"""
+    """List of (start, end) for runs of True (end inclusive)."""
     idx = np.flatnonzero(np.diff(np.r_[0, mask.astype(np.int8), 0]))
     return list(zip(idx[0::2], idx[1::2] - 1))
 
 
 def _wave_mask(hsv):
-    """波形の塗り（濃い青・薄い青）の画素。"""
+    """Pixels of the waveform fill (dark blue / light blue)."""
     d = np.abs(hsv[..., 0].astype(np.int16) - Settings.WAVE_HUE)
     return (d <= Settings.WAVE_HUE_TOL) & (hsv[..., 1] >= Settings.WAVE_SAT_MIN) & (hsv[..., 2] >= Settings.WAVE_VAL_MIN)
 
@@ -132,7 +135,7 @@ def _load_axis_reference():
 
 
 def _format_time(frame, fps):
-    """フレーム番号からHH:MM:SS:CC形式のタイムスタンプを生成"""
+    """Build an HH:MM:SS:CC timestamp from a frame number"""
     total_seconds = frame / fps
     s = int(total_seconds)
     centiseconds = int((total_seconds - s) * 100)
@@ -142,14 +145,18 @@ def _format_time(frame, fps):
 
 
 def detect_pen(frame):
-    """ペン先の x（画面座標）。見つからなければ NaN。
+    """x of the pen tip (screen coordinates), or NaN if not found.
 
-    気道内圧の帯は常に塗られているので、塗りの無い列の区間からペン先を探す（ペン先 = 区間の左端の1つ手前）。
-      1. 消去帯: 長さが SWEEP_GAP_LEN の範囲で、右側に（1周前の）塗りがある区間
-      2. 無ければ、右端まで続く区間（最初の1周・画面の消去の直後・ペン先が右端に近く消去帯が端で切れたとき）
-    右端の手前で左端に戻ったときは、右側の消去された部分も右端まで続く区間になるが、1 の消去帯が優先される。
-    ペン先が右端の近くにあると、消去帯が右端で折り返して左端側にもはみ出す。左端から始まる区間と右端まで続く区間の
-    長さの合計が消去帯の幅なら、ペン先は右端側にある。
+    The airway pressure band is always filled, so the pen tip is found from runs of unfilled columns
+    (pen tip = one column before the left end of the run).
+      1. Erase band: a run whose length is within SWEEP_GAP_LEN and that has fill (from the previous sweep) to its right
+      2. Otherwise, a run extending to the right edge (first sweep, right after the screen is cleared, or when the pen tip
+         is near the right edge and the erase band is cut off at the edge)
+    When the sweep returns to the left edge before reaching the right edge, the erased part on the right also becomes a run
+    extending to the right edge, but the erase band of case 1 takes priority.
+    When the pen tip is near the right edge, the erase band wraps at the right edge and spills over onto the left edge.
+    If the combined length of the run starting at the left edge and the run extending to the right edge equals the
+    erase band width, the pen tip is on the right-edge side.
     """
     y0, y1 = Settings.SWEEP_GAP_ROWS
     x_lo, x_hi = Settings.SWEEP_X_LEFT, Settings.SWEEP_X_RIGHT
@@ -169,7 +176,7 @@ def detect_pen(frame):
 
 
 def wave_scale(name, max_value):
-    """縦軸の最大値 → (最小値, 最大値, 基線のy, px/単位)。"""
+    """Vertical-axis max value -> (min value, max value, baseline y, px/unit)."""
     spec = Settings.WAVES[name]
     vmax = float(max_value) if max_value and np.isfinite(max_value) and max_value > 0 else float(spec["default_max"])
     vmin = {"fixed": float(spec.get("min_value", 0)), "neg_max": -vmax, "zero": 0.0}[spec["min_rule"]]
@@ -178,7 +185,7 @@ def wave_scale(name, max_value):
 
 
 def popup_pixels(frame):
-    """ポップアップ（設定画面など）の枠の色の画素数。"""
+    """Number of pixels with the frame color of a popup (settings screen, etc.)."""
     x, y, w, h = Settings.POPUP_AREA
     hsv = cv2.cvtColor(frame[y:y + h, x:x + w], cv2.COLOR_BGR2HSV)
     (h0, h1), (s0, s1), (v0, v1) = Settings.POPUP_HSV
@@ -187,11 +194,11 @@ def popup_pixels(frame):
 
 
 # ============================================================
-# OCR結果パース
+# OCR result parsing
 # ============================================================
 
 def _parse_ocr(result):
-    """EasyOCR の結果 → (値の文字列, 生の文字列, 信頼度の文字列)。VT は整数（mL）。"""
+    """EasyOCR result -> (value string, raw string, confidence string). VT is an integer (mL)."""
     texts = [t for _, t, _ in result]
     confs = [s for _, _, s in result]
     raw = ", ".join(texts)
@@ -207,9 +214,9 @@ def _parse_ocr(result):
 def initial_ocr(frames, total_frames, subfolder, settings={},
                 progress_callback=None, frames_dir=None):
     """
-    各フレームで VT と縦軸の最大値を読み取り、ペン先の位置・ポップアップの有無を記録する。
+    Read VT and the vertical-axis max values in each frame, and record the pen tip position and whether a popup is shown.
 
-    VT は、読み取り位置の画像が前回OCRしたときから変わったフレームだけOCRし、それ以外は前の値を引き継ぐ。
+    VT is OCR'd only in frames where the ROI image has changed since the last OCR; otherwise the previous value is carried over.
 
     Returns:
         pd.DataFrame (columns: Frame, BreathMark, VT, VT_raw, VT_conf, OCR_Done,
@@ -251,7 +258,7 @@ def initial_ocr(frames, total_frames, subfolder, settings={},
                 value, raw, conf = last_val[key]
                 row[key], row[f"{key}_raw"], row[f"{key}_conf"] = value, raw, conf
 
-            # 縦軸の最大値（数字の画像が変わったときだけOCR）
+            # Vertical-axis max values (OCR only when the digit image changes)
             for name, spec in Settings.WAVES.items():
                 roi = _crop(gray, spec["max_roi"]).astype(np.int16)
                 prev = last_scale_roi[name]
@@ -283,18 +290,18 @@ def initial_ocr(frames, total_frames, subfolder, settings={},
 
 
 # ============================================================
-# 掃引の追跡
+# Sweep tracking
 # ============================================================
 
 def track_sweep(sweep_raw, fps):
-    """各フレームのペン先を、折り返しを展開した通しの位置（描いた列の累計）に直す。
+    """Convert each frame's pen tip into a continuous position with wraps unrolled (cumulative drawn columns).
 
     Returns:
         dict(
-            pen:   各フレームのペン先（画面のx。欠けは前後から補間）,
-            u:     通しの位置（描いた列の数の累計。折り返しをまたいでも連続）,
-            wrap:  このフレームの直前で左端に戻ったか（0/1）,
-            speed: 各フレームの掃引の速さ（px/フレーム、近傍の中央値）,
+            pen:   pen tip per frame (screen x; gaps interpolated from neighbors),
+            u:     continuous position (cumulative number of drawn columns; continuous across wraps),
+            wrap:  whether the sweep returned to the left edge just before this frame (0/1),
+            speed: sweep speed per frame (px/frame, rolling mean over neighboring frames),
         )
     """
     pen = np.asarray(sweep_raw, float).copy()
@@ -307,7 +314,7 @@ def track_sweep(sweep_raw, fps):
         u = np.arange(n) * default_speed
         return {"pen": np.full(n, np.nan), "u": u, "wrap": np.zeros(n, int), "speed": np.full(n, default_speed)}
 
-    # 欠けを埋める: 折り返しの区間ごとに、前後の検出値から直線で補間（端は最寄りの値）
+    # Fill gaps: within each wrap segment, linearly interpolate from neighboring detections (ends take the nearest value)
     vi = np.flatnonzero(valid)
     seg_id = np.zeros(n, int)
     jumps = vi[1:][np.diff(pen[vi]) < -Settings.SWEEP_WRAP_JUMP]
@@ -320,9 +327,9 @@ def track_sweep(sweep_raw, fps):
             pen[idx] = np.interp(idx, ok, pen[ok])
     pen = np.where(np.isfinite(pen), pen, np.nanmedian(pen))
 
-    # 速さ: 折り返しでない隣どうしの進み（0 <= d < 30）の近傍平均
-    # （収録のフレーム間隔の揺らぎで 4px と 6px が交互に出るので、中央値ではなく平均）
-    # 0.2.0: 窓の幅（フレーム数）と1フレームの進みの上限は fps から求める（10 fps で 0.1.x と同じ 101 / 5 フレーム・30px）
+    # Speed: neighborhood mean of the advance between adjacent frames that are not wraps (0 <= d < 30)
+    # (jitter in the recording's frame interval makes 4px and 6px alternate, so use the mean rather than the median)
+    # 0.2.0: the window width (frames) and the max advance per frame are derived from fps (at 10 fps: 101 / 5 frames and 30px, same as 0.1.x)
     d = np.diff(pen)
     max_step = 30.0 * max(1.0, 10.0 / fps)
     step = np.where((d >= 0) & (d < max_step), d, np.nan)
@@ -330,7 +337,7 @@ def track_sweep(sweep_raw, fps):
     s_ser = pd.Series(np.r_[step, np.nan]).rolling(win, center=True, min_periods=max(2, round(0.5 * fps))).mean().to_numpy()
     speed = np.where(np.isfinite(s_ser), s_ser, np.nanmean(step) if np.isfinite(step).any() else default_speed)
 
-    # 通しの位置: 普段はペン先の進みをそのまま足す。左端に戻ったフレームはその時点の速さだけ進めたとみなす
+    # Continuous position: normally add the pen tip's advance as is. A frame that returned to the left edge is treated as advancing by the current speed
     wrap = np.r_[0, (d < -Settings.SWEEP_WRAP_JUMP).astype(int)]
     adv = np.r_[0, np.where(wrap[1:] == 1, speed[1:], np.maximum(d, 0))]
     u = (pen[0] - Settings.SWEEP_X_LEFT) + np.cumsum(adv)
@@ -341,7 +348,7 @@ def track_sweep(sweep_raw, fps):
 # post_ocr
 # ============================================================
 
-SCALE_VOTE_SEC = 0.5   # 0.2.0: 目盛りの多数決に使う呼吸の最後の時間（10 fps で 0.1.x と同じ 5 フレーム）
+SCALE_VOTE_SEC = 0.5   # 0.2.0: duration at the end of a breath used for the scale majority vote (5 frames at 10 fps, same as 0.1.x)
 
 
 def _mode(series):
@@ -352,7 +359,7 @@ def _mode(series):
 
 def post_ocr(df, Analyze_Id, user_ID, settings={}):
     """
-    呼吸の区切り（VT の表示の更新）を求め、呼吸番号・ペン先の位置を付ける。
+    Find breath boundaries (VT display updates) and assign breath numbers and pen tip positions.
 
     Returns:
         (df_frames, df_breaths)
@@ -374,8 +381,8 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
     screen = pd.to_numeric(df["Screen_Diff"], errors="coerce") if "Screen_Diff" in df else pd.Series(np.nan, index=df.index)
     popup = pd.to_numeric(df["Popup_Px"], errors="coerce") if "Popup_Px" in df else pd.Series(0, index=df.index)
     df["Abnormal"] = ((screen > abnormal_thresh) | (popup > Settings.POPUP_MIN_PIXELS)).astype(int)
-    # 縦軸の最大値: 読めなかったフレームと、stable フレーム未満しか続かない値（スケールを切り替えている最中の読み違い）は
-    # 前の値を引き継ぐ
+    # Vertical-axis max: frames that could not be read, and values lasting fewer than `stable` frames (misreads while the scale
+    # is being switched), carry over the previous value
     for name in Settings.WAVES:
         col = f"Scale_{name}"
         if col in df:
@@ -383,7 +390,7 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
             run_len = v.groupby((v != v.shift()).cumsum()).transform("size")
             df[col] = v.where((v > 0) & (run_len >= stable)).ffill().bfill()
 
-    # --- 呼吸の区切り: VT の表示の更新（新しい値が stable フレーム以上続いたもの） ---
+    # --- Breath boundaries: VT display updates (a new value lasting at least `stable` frames) ---
     state = df[triggers].astype(str).where(df[triggers].notna(), "").agg("|".join, axis=1) if triggers else pd.Series("", index=df.index)
     state = state.where(df["Abnormal"] == 0)
     state = state.where(state.str.strip("|") != "")
@@ -402,7 +409,7 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
             j = i
             while j < n and vals[j] == v:
                 j += 1
-            if j - i >= stable or j == n:   # 1〜2フレームだけの読み違いは無視
+            if j - i >= stable or j == n:   # ignore misreads lasting only 1-2 frames
                 if not updates or i - updates[-1] >= min_gap:
                     updates.append(i)
                 current = v
@@ -410,7 +417,7 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
             continue
         i += 1
 
-    # 区切りの位置を boundary_shift_sec だけずらす（VT の表示の更新は吸気の始まりより約0.6秒遅れる）
+    # Shift boundaries by boundary_shift_sec (the VT display update lags the start of inspiration by about 0.6 s)
     bounds = sorted({min(max(u + shift, 0), n - 1) for u in updates})
     df["BreathMark"] = 0
     df.loc[bounds, "BreathMark"] = 1
@@ -421,18 +428,18 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
     df.loc[updates, "Display_Update"] = 1
     df["Time"] = df["Frame"].apply(lambda f: _format_time(f, fps))
 
-    # --- ペン先の追跡 ---
+    # --- Pen tip tracking ---
     sw = track_sweep(df["Sweep_Raw"].to_numpy(float) if "Sweep_Raw" in df else np.full(n, np.nan), fps)
     df["Sweep_X"] = np.round(sw["pen"], 1)
     df["Sweep_U"] = np.round(sw["u"], 2)
     df["Sweep_Wrap"] = sw["wrap"]
-    df["Sweep_Speed"] = np.round(sw["speed"] * fps, 2)  # px/秒
+    df["Sweep_Speed"] = np.round(sw["speed"] * fps, 2)  # px/s
     print(f"[post_ocr] sweep detected {np.isfinite(df['Sweep_Raw']).mean() * 100:.1f}% of frames, "
           f"{int(sw['wrap'].sum())} wraps, speed {np.nanmedian(sw['speed']) * fps:.1f} px/s")
 
-    # --- 呼吸ごとの表 ---
+    # --- Per-breath table ---
     rows = []
-    last_scale = {}   # 直前の呼吸の縦軸の最大値（読めなかった呼吸はこれを引き継ぐ）
+    last_scale = {}   # vertical-axis max of the previous breath (breaths that could not be read carry this over)
     groups = list(df.groupby("BreathNumber", sort=True))
     for k, (no, g) in enumerate(groups):
         s, e = int(g.index[0]), int(g.index[-1])
@@ -446,7 +453,7 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
             "Time": df.at[s, "Time"],
             "Duration": round((e - s + 1) / fps, 2),
         }
-        # 画面の VT は直前の呼吸の測定値: この呼吸の値 = 次の呼吸の間に表示される値
+        # The on-screen VT is the measurement of the previous breath: this breath's value = the value displayed during the next breath
         for key in OCR_KEYS:
             row[key] = _mode(nxt_normal[key]) if nxt_normal is not None and key in df else np.nan
             row[f"{key}_displayed"] = _mode(normal[key]) if key in df else np.nan
@@ -459,8 +466,8 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
             alerts.append("Abnormal")
         row["Alert"] = ",".join(dict.fromkeys(alerts))
         row["Abnormal"] = int(g["Abnormal"].any())
-        # 縦軸のスケール = 波形を切り出す最後のフレームのもの。1フレームの誤読（100→25 など）で呼吸全体が
-        # 狂わないよう、最後の SCALE_VOTE_SEC 秒のフレーム（正常なもの）の多数決にする。読めなければ直前の呼吸の値
+        # Vertical-axis scale = that of the last frame, from which the waveform is cut. So that a single-frame misread (e.g. 100->25)
+        # does not corrupt the whole breath, take a majority vote over the (normal) frames in the last SCALE_VOTE_SEC seconds. If unreadable, use the previous breath's value
         n_vote = max(1, round(SCALE_VOTE_SEC * fps))
         tail = normal.tail(n_vote) if len(normal) else g.tail(n_vote)
         for name, spec in Settings.WAVES.items():
@@ -475,7 +482,7 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
         rows.append(row)
     df_breaths = pd.DataFrame(rows)
 
-    # VT が前の呼吸と同じ値だと区切れず、2呼吸が1つになる（extract_waves で波形から補って区切り、付け直す）
+    # If VT has the same value as the previous breath, no boundary is detected and two breaths merge into one (extract_waves splits them using the waveform and re-marks)
     df_breaths = _mark_merged(df_breaths)
     df["Alert"] = df["BreathNumber"].map(df_breaths.set_index("BreathNumber")["Alert"]).fillna("")
 
@@ -497,12 +504,12 @@ def _fill_small_gaps(v, max_gap):
 
 
 def extract_column_values(frame, xs, scale_max=None):
-    """画面の列 xs ごとに、各波形の値（物理量）を求める。
+    """For each screen column in xs, compute the value (physical quantity) of each waveform.
 
-    値 = 基線から最も遠い塗りの端（基線より上の塗りが多ければ上端、下が多ければ下端）。
-    気道内圧の塗りが無い列は波形が無い（消去済み）とみなし、全波形 NaN。
-    気道内圧の塗りがあってフロー・ボリュームの塗りが無い列は 0。
-    scale_max: {波形名: 縦軸の最大値}。無ければ既定のスケール。
+    Value = the edge of the fill farthest from the baseline (top edge if more fill is above the baseline, bottom edge if more is below).
+    Columns with no airway pressure fill are treated as having no waveform (erased): NaN for all waveforms.
+    Columns with airway pressure fill but no flow/volume fill are 0.
+    scale_max: {waveform name: vertical-axis max}. If absent, the default scale is used.
     """
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     mask = _wave_mask(hsv)
@@ -536,16 +543,16 @@ def extract_column_values(frame, xs, scale_max=None):
 
 
 def find_breath_splits(wave, rate, opts):
-    """1呼吸の波形の中にある、2つ目以降の吸気の立ち上がりを調べる。
+    """Look for the second and later inspiratory onsets within one breath's waveform.
 
-    吸気の立ち上がり = フローが split_flow を超えて split_insp_sec 以上続く区間の始まり（フローが 1 L/min 以下だった最後の点）。
-    立ち上がりの直前でボリュームが基線まで戻っていれば（吐き切っていれば）別の呼吸 → 区切る。
-    戻り切る前に次の吸気が来ていれば Reverse Triggering などの二峰性の1呼吸 → 区切らない（RT?）。
-      吐き切った = 直前 0.2秒のボリュームの中央値 <= max(exhaled_ml, exhaled_frac × 直前の区切りからの最大ボリューム)
-    新しい吸気のボリュームが split_min_insp_ml 未満の立ち上がりは無視する。
+    Inspiratory onset = start of a run where flow exceeds split_flow for at least split_insp_sec (the last point where flow was <= 1 L/min).
+    If the volume has returned to baseline (fully exhaled) just before the onset, it is a separate breath -> split.
+    If the next inspiration arrives before the volume fully returns, it is a single biphasic breath such as Reverse Triggering -> do not split (RT?).
+      Fully exhaled = median volume over the preceding 0.2 s <= max(exhaled_ml, exhaled_frac x max volume since the previous split)
+    Onsets whose new inspiratory volume is below split_min_insp_ml are ignored.
 
     Returns:
-        (区切る行番号のリスト（立ち上がりの split_lead_sec 前）, RT? の立ち上がりの行番号のリスト)
+        (list of row indices to split at (split_lead_sec before the onset), list of row indices of RT? onsets)
     """
     flow = np.nan_to_num(wave["Flow"].to_numpy(float), nan=0.0)
     vol = wave["Volume"].to_numpy(float)
@@ -569,7 +576,7 @@ def find_breath_splits(wave, rate, opts):
             o -= 1
         cut = o - lead
         if cut - last < min_len or n - cut < min_len // 2:
-            continue  # この呼吸自身の吸気、または端に近すぎる
+            continue  # this breath's own inspiration, or too close to the edge
         before = vol[max(o - pre, 0):o]
         if not np.isfinite(before).any() or not np.isfinite(vol[last:o]).any():
             continue
@@ -587,7 +594,7 @@ def find_breath_splits(wave, rate, opts):
 
 
 def _mark_merged(df_breaths):
-    """長さが前後の呼吸の中央値の1.7倍以上の呼吸に Merged? を付ける（付け直す）。"""
+    """Mark Merged? on breaths at least 1.7x the median duration of the surrounding breaths (re-marks from scratch)."""
     alerts = df_breaths["Alert"].fillna("").astype(str).map(lambda a: [x for x in a.split(",") if x and x != "Merged?"])
     if len(df_breaths) >= 5:
         med = df_breaths["Duration"].rolling(9, center=True, min_periods=3).median()
@@ -598,25 +605,26 @@ def _mark_merged(df_breaths):
 
 
 # ============================================================
-# 呼吸の区切りを吸気の始まりへ合わせる（NAVA v1.3 の切り詰めと同じ考え方）
+# Align breath boundaries to inspiratory onsets (same idea as the trimming in NAVA v1.3)
 # ============================================================
-# 1呼吸 = 吸気の始まり 〜 次の吸気の始まり。
-# 波形が時間の上で隙間なくつながっている呼吸どうしは、区切りを「近くの吸気の始まりの TRIM_LEAD_SEC 前」へ動かし、
-# 行を前後の呼吸の間で移す（データは消えない）。つながりの端（前後の呼吸に波形が無い）は、
-# 吸気の始まりより前（前の呼吸の呼気の終わり）と、呼気を伴わない最後の吸気（次の呼吸の吸気の途中）を削る。
-ONSET_FLOW = 4.0        # Flow がこれ（L/min）を超えたら吸気の流れ
-ONSET_RUN_SEC = 0.06    # 吸気の流れがこれ以上続くこと
-ONSET_PEAK = 12.0       # その吸気がこれ（L/min）以上に届くこと
-QUIET_SEC = 0.06        # 吸気の前に、吸気でない区間がこれ以上あること
-ONSET_FRAC = 0.2        # 吸気の最大値のこの割合を超えた点から、立ち上がりの足元までさかのぼる
-EXP_FLOW = 4.0          # 呼気の流れ（L/min, 0 よりこれ以上下）
-BACKTRACK_TOL = 0.3     # 足元までさかのぼるとき、これ（L/min）以上下がり続ける間はさかのぼる
-TRIM_LEAD_SEC = 0.04    # 吸気の始まりのこの時間前から残す
-CONTIG_TOL_SEC = 0.15   # 前の呼吸の最後の点の次の時刻と、次の呼吸の最初の点の時刻の差がこれ（秒）以内ならつながっている（時刻の推定の誤差を見込む）
+# 1 breath = inspiratory onset to the next inspiratory onset.
+# For breaths whose waveforms are contiguous in time, move the boundary to "TRIM_LEAD_SEC before the nearby inspiratory onset"
+# and transfer rows between adjacent breaths (no data is lost). At the ends of a contiguous run (no waveform in the
+# neighboring breath), trim the part before the inspiratory onset (end of the previous breath's expiration) and a final
+# inspiration with no following expiration (partway into the next breath's inspiration).
+ONSET_FLOW = 4.0        # flow above this (L/min) counts as inspiratory flow
+ONSET_RUN_SEC = 0.06    # inspiratory flow must last at least this long
+ONSET_PEAK = 12.0       # that inspiration must reach at least this (L/min)
+QUIET_SEC = 0.06        # there must be at least this much non-inspiratory time before the inspiration
+ONSET_FRAC = 0.2        # from the point exceeding this fraction of the inspiratory peak, backtrack to the foot of the rise
+EXP_FLOW = 4.0          # expiratory flow (L/min, at least this far below 0)
+BACKTRACK_TOL = 0.3     # when backtracking to the foot, continue while the flow keeps dropping by at least this (L/min)
+TRIM_LEAD_SEC = 0.04    # keep data from this long before the inspiratory onset
+CONTIG_TOL_SEC = 0.15   # breaths are contiguous if the time after the previous breath's last point and the time of the next breath's first point differ by at most this (s) (allows for timing estimation error)
 
 
 def _inspiration_onsets(flow, rate):
-    """flow: Flow（L/min, NaN 可）, rate: 点/秒。吸気の始まり（立ち上がりの足元）の行番号の一覧。"""
+    """flow: Flow (L/min, NaN allowed), rate: points/s. List of row indices of inspiratory onsets (foot of the rise)."""
     raw = np.asarray(flow, dtype=float)
     g = pd.Series(raw).interpolate(limit_area="inside").to_numpy()
     n = len(g)
@@ -651,9 +659,9 @@ def _inspiration_onsets(flow, rate):
 
 
 def _snap_to_breaths(items):
-    """items: 時間順の dict のリスト {"wave": DataFrame（Flow 列, 行=点）または None, "t0": 秒, "rate": 点/秒}。
-    各 item に "wave"（切り直した波形）, "t0", "rate", "trim_head", "trim_tail"（元の範囲から削った/渡した点の数。負は前後から受け取った点）を書き込む。"""
-    # つながっている呼吸のまとまりに分ける
+    """items: time-ordered list of dicts {"wave": DataFrame (Flow column, rows = points) or None, "t0": seconds, "rate": points/s}.
+    Writes "wave" (the re-cut waveform), "t0", "rate", "trim_head", "trim_tail" (number of points trimmed/handed over from the original range; negative = points received from neighbors) into each item."""
+    # Split into groups of contiguous breaths
     groups, cur = [], []
     for i, it in enumerate(items):
         it.setdefault("trim_head", 0)
@@ -683,11 +691,11 @@ def _snap_to_breaths(items):
         on = np.array(_inspiration_onsets(flow, rate), int)
         valid = cat[[c for c in cat.columns if c != "X" and not c.startswith("_")]].notna().any(axis=1).to_numpy()
         new = bounds.copy()
-        # 先頭: 空の行と、最初の呼吸の吸気の始まりより前
+        # Head: empty rows and anything before the first breath's inspiratory onset
         lo = int(np.argmax(valid)) if valid.any() else 0
-        first = on[on < (bounds[0] + bounds[1]) // 2]   # 最初の呼吸の前半にある吸気の始まり
+        first = on[on < (bounds[0] + bounds[1]) // 2]   # inspiratory onsets in the first half of the first breath
         new[0] = max(lo, int(first[0]) - lead) if len(first) else lo
-        # 呼吸の間の区切り: 前後の呼吸の真ん中より内側にある吸気の始まりのうち、元の区切りに最も近いもの
+        # Boundaries between breaths: among inspiratory onsets between the midpoints of the adjacent breaths, the one closest to the original boundary
         for j in range(1, len(g)):
             a = (bounds[j - 1] + bounds[j]) // 2
             b = (bounds[j] + bounds[j + 1]) // 2
@@ -695,13 +703,13 @@ def _snap_to_breaths(items):
             if len(cand):
                 o = int(cand[np.argmin(np.abs(cand - bounds[j]))])
                 new[j] = o - lead
-        # 末尾: 空の行と、呼気を伴わない最後の吸気（次の呼吸の吸気の途中）
+        # Tail: empty rows and a final inspiration with no following expiration (partway into the next breath's inspiration)
         hi = len(cat) - int(np.argmax(valid[::-1])) if valid.any() else len(cat)
         new[-1] = hi
         last_on = on[(on > new[-2] + lead) & (on < hi)]
         if len(last_on) and not (np.nan_to_num(flow[last_on[-1]:hi]) < -EXP_FLOW).any():
             new[-1] = max(new[-2] + 1, int(last_on[-1]) - lead)
-        # 順序を保つ（区切りが追い越さない）
+        # Keep order (boundaries must not overtake each other)
         for j in range(1, len(new)):
             new[j] = max(new[j], new[j - 1] + 1)
         for j, i in enumerate(g):
@@ -710,7 +718,7 @@ def _snap_to_breaths(items):
             items[i]["trim_tail"] = int(bounds[j + 1]) - b
             items[i]["wave"] = cat.iloc[a:b].reset_index(drop=True)
             items[i]["t0"] = float(times[a])
-            # 前後の呼吸から受け取った点は元の呼吸の速さで時刻が決まっているので、速さは両端の点の時刻から求め直す
+            # Points received from neighboring breaths have times based on their original breath's speed, so recompute the rate from the times of the end points
             if b - a >= 2 and times[b - 1] > times[a]:
                 items[i]["rate"] = float((b - a - 1) / (times[b - 1] - times[a]))
     return items
@@ -719,22 +727,22 @@ def _snap_to_breaths(items):
 def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
                   settings={}, overwrite=False, archive_dir=None):
     """
-    呼吸ごとの波形CSV（列: X, Pressure, Flow, Volume）を output_dir/<BreathNumber>.csv に書き出す。
+    Write a waveform CSV per breath (columns: X, Pressure, Flow, Volume) to output_dir/<BreathNumber>.csv.
 
-    呼吸の最後のフレームの画像から、呼吸の開始時のペン先の次の列〜終了時のペン先の列を切り出す。
-    途中で左端に戻った呼吸は、戻る前の部分（右側）と戻った後の部分（左側）をつなぐ。2回以上戻った呼吸は最後の1周分だけ。
-    各点の時刻 = Wave_T0 + 行番号 / Wave_Rate（秒、動画の先頭から）。
+    From the image of the breath's last frame, cut the columns from the one after the pen tip at the breath's start to the pen tip at its end.
+    For a breath that returned to the left edge midway, join the part before the return (right side) and the part after it (left side). For a breath that returned two or more times, only the last sweep is used.
+    Time of each point = Wave_T0 + row index / Wave_Rate (seconds from the start of the video).
 
-    VT が前の呼吸と同じ値だと表示の更新が見えず、2呼吸が1つになる。wave_split が有効なら、波形の吸気の立ち上がりで
-    補って区切る（find_breath_splits）。区切った呼吸は Boundary = "Waveform"。呼吸番号は時間順に振り直し、
-    df_frames の BreathNumber / BreathMark / Alert も書き換える。
+    If VT has the same value as the previous breath, the display update is not visible and two breaths merge into one. If wave_split
+    is enabled, they are split using the inspiratory onsets in the waveform (find_breath_splits). Split breaths get Boundary = "Waveform".
+    Breath numbers are reassigned in time order, and BreathNumber / BreathMark / Alert in df_frames are rewritten too.
 
-    0.3.0: trim_to_breath（既定 ON）なら、波形の区切りを吸気の始まりへ合わせる（_snap_to_breaths）。
-    呼吸の Frame / End_Frame（VT の表示の更新による区切り）は変えず、波形と Wave_T0 / Wave_Rate だけを変える。
-    動かした点の数は Wave_Trim_Head / Wave_Trim_Tail（負は前後の呼吸から受け取った点）。
+    0.3.0: if trim_to_breath (default ON), align the waveform boundaries to inspiratory onsets (_snap_to_breaths).
+    The breath's Frame / End_Frame (boundaries from VT display updates) are unchanged; only the waveform and Wave_T0 / Wave_Rate change.
+    The number of moved points is in Wave_Trim_Head / Wave_Trim_Tail (negative = points received from neighboring breaths).
 
     Returns:
-        (CSV を書き出した呼吸の数, df_breaths)
+        (number of breaths whose CSV was written, df_breaths)
     """
     opts = settings.get("post_ocr", {})
     fps = float(opts.get("fps", 10))
@@ -753,7 +761,7 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
     def frame_file(f):
         return os.path.join(frames_root, f"frame_{int(f):08d}.jpg")
 
-    pieces = []  # (行の dict, 波形の DataFrame または None)
+    pieces = []  # (row dict, waveform DataFrame or None)
     n_split = n_rt = 0
     last_k = len(df_breaths) - 1
 
@@ -771,17 +779,17 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
             pieces.append((row, None))
             continue
 
-        # 範囲: (前のフレームのペン先, 最後のフレームのペン先]。途中の折り返しは最後のものだけ使う
+        # Range: (pen tip of the previous frame, pen tip of the last frame]. Of the wraps in between, only the last is used
         p0 = s - 1 if s > 0 else s
         wraps = [i for i in range(p0 + 1, e + 1) if wrap[i]]
         if len(wraps) >= 2:
             alerts.append("Long")
-            p0 = wraps[-2]  # 最後から2番目の折り返しの直後から（それより前は上書き済み）
+            p0 = wraps[-2]  # start right after the second-to-last wrap (anything earlier has been overwritten)
             wraps = wraps[-1:]
         first_x = int(np.floor(pen[p0])) + 1
         x_end = int(np.floor(pen[e]))
         if wraps:
-            # 戻った後: 左端〜終了時のペン先。戻る前: 開始時のペン先の次の列から、残りの列数（通しの位置の差から求める）
+            # After the return: left edge to the pen tip at the end. Before the return: from the column after the pen tip at the start, the remaining number of columns (from the difference in continuous position)
             n_after = max(x_end - Settings.SWEEP_X_LEFT + 1, 0)
             n_before = max(int(round(u[e] - u[p0])) - n_after, 0)
             xs = np.r_[np.arange(first_x, first_x + n_before), np.arange(Settings.SWEEP_X_LEFT, x_end + 1)]
@@ -792,21 +800,21 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
             pieces.append((row, None))
             continue
 
-        # 描画領域の外になった列（折り返し位置の推定誤差）は、時刻がずれないよう行を残して NaN にする
+        # Columns outside the drawing area (error in the estimated wrap position) keep their rows as NaN so the timing does not shift
         inside = (xs >= Settings.SWEEP_X_LEFT) & (xs < Settings.SWEEP_X_RIGHT)
         scale_max = {name: b.get(f"{spec['scale_prefix']}_max") for name, spec in Settings.WAVES.items()}
         vals = extract_column_values(_normalize_frame(frame), np.clip(xs, Settings.SWEEP_X_LEFT, Settings.SWEEP_X_RIGHT - 1), scale_max)
         wave = pd.DataFrame({"X": np.arange(len(xs)) + int(round(u[p0])) + 1})
         for name in Settings.WAVES:
             wave[name] = np.round(np.where(inside, vals[name], np.nan), 2)
-        wave["_sx"] = xs   # 画面の列（区切りを動かした後の Sweep_Start / End 用。書き出さない）
+        wave["_sx"] = xs   # screen column (for Sweep_Start / End after boundaries are moved; not written out)
 
-        # 時刻: ペン先の通しの位置 u と時刻の対応から内挿（掃引の速さが変わっても合う）
+        # Time: interpolate from the mapping between the pen tip's continuous position u and time (stays correct when the sweep speed changes)
         t_first = float(np.interp(u[e] - len(xs) + 1, u, times))
         t_last = times[e]
         rate = (len(xs) - 1) / (t_last - t_first) if t_last > t_first else float(df_frames["Sweep_Speed"].iloc[e])
 
-        # 波形の吸気の立ち上がりで補って区切る
+        # Add splits at inspiratory onsets in the waveform
         cuts, rts = find_breath_splits(wave, rate, opts) if do_split else ([], [])
         n_split += len(cuts)
         n_rt += len(rts)
@@ -826,13 +834,13 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
             r["Start_File_Name"] = frame_file(f_start)
             piece_alerts = [x for x in alerts if not (x == "Fragment" and ((k == 0 and i > 0) or (k == last_k and i < len(edges) - 2)))]
             if r["Wave_Missing"] > 0.3:
-                piece_alerts.append("Partial")   # モード変更などで画面が消去され、波形の一部が残っていない
+                piece_alerts.append("Partial")   # screen was cleared (e.g. mode change) and part of the waveform is missing
             if any(a <= o < z for o in rts):
-                piece_alerts.append("RT?")       # 吐き切る前に次の吸気が来た二峰性の呼吸（Reverse Triggering など）
+                piece_alerts.append("RT?")       # biphasic breath where the next inspiration came before full exhalation (e.g. Reverse Triggering)
             r["Alert"] = piece_alerts
             pieces.append((r, wave.iloc[a:z].reset_index(drop=True)))
 
-    # 波形の区切りを吸気の始まりへ合わせる（呼吸どうしの波形はつながっているので、点を前後の呼吸の間で移す）
+    # Align waveform boundaries to inspiratory onsets (breath waveforms are contiguous, so points are moved between adjacent breaths)
     if opts.get("trim_to_breath", True):
         items = [{"wave": w, "t0": float(r["Wave_T0"]) if w is not None else np.nan,
                   "rate": float(r["Wave_Rate"]) if w is not None else np.nan} for r, w in pieces]
@@ -853,14 +861,14 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
             r["Wrapped"] = int(bool(np.any(np.diff(xs_w) < 0)))
         pieces = [(r, it["wave"]) for (r, _), it in zip(pieces, items)]
 
-    # 区切った片の終わり = 次の片の開始の1つ前のフレーム（最後の片は元の呼吸の終わり）
+    # End of a split piece = the frame before the start of the next piece (the last piece keeps the original breath's end)
     for i in range(len(pieces) - 1):
         r, nxt = pieces[i][0], pieces[i + 1][0]
         if nxt["Boundary"] == "Waveform":
             r["End_Frame"] = int(nxt["Frame"]) - 1
             r["End_File_Name"] = frame_file(r["End_Frame"])
 
-    # 呼吸番号を時間順に振り直し、CSV を書き出す
+    # Reassign breath numbers in time order and write the CSVs
     rows, written = [], 0
     for no, (r, wave) in enumerate(pieces, start=1):
         r["BreathNumber"] = no
@@ -875,13 +883,13 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
         rows.append(r)
     df_out = _mark_merged(pd.DataFrame(rows))
     if do_split:
-        # 波形を調べた呼吸は、吐き切った後の吸気の立ち上がりで区切り済み。残った長い呼吸は吸気が1回だけ（後に無呼吸）なので
-        # Merged? を外す（波形が無い呼吸だけ残す）
+        # Breaths whose waveform was examined are already split at inspiratory onsets after full exhalation. Remaining long breaths have a single
+        # inspiration (followed by apnea), so remove Merged? (keep it only on breaths without a waveform)
         has_wave = np.array([w is not None for _, w in pieces])
         df_out.loc[has_wave, "Alert"] = df_out.loc[has_wave, "Alert"].map(
             lambda a: ",".join(x for x in a.split(",") if x and x != "Merged?"))
 
-    # df_frames（呼び出し元のもの）の呼吸番号も合わせる
+    # Update the breath numbers in df_frames (the caller's object) to match
     bn = np.zeros(len(frame_no), int)
     mark = np.zeros(len(frame_no), int)
     alert = np.full(len(frame_no), "", object)

@@ -1,13 +1,12 @@
 # CHANGELOG
 
 ## 0.2.0 (2026-10-25)
-engine_api 3 に対応（VentOCR がフレームの画像を全部は保存せず、エンジンが開いた画像だけを作る。ENGINE_API.md §5.1）。
-- 画像を読むのは、波形の抽出で呼吸ごとの最後のフレームを1枚ずつ、時間の順に（もとから）。全フレームを見る処理は initial_ocr の中だけ
-- 秒とフレーム数の換算をフレームレートから: 掃引の速さをならす窓（10 fps で 101 フレーム）、その最小数（5）、
-  1 フレームの進みの上限（30px。10 fps 未満では広げる）、目盛りの多数決に使うフレーム（5）。10 fps では 0.1.2 と同じ
-- outputs: alerts（Alert の値の意味と、精度の評価で除外するか）を追加
-- 確認（VentOCR e0e306b、V600 のサンプル 4K・385 秒）: 0.1.2（全フレームを保存）と 0.2.0（開いた画像だけを作る。作った画像は 86 枚）で、
-  Frames.csv・Breaths.csv（File_Name 以外）・波形 91 呼吸が一致。20 fps でも 93 呼吸（10 fps は 94）、目盛りの値は同じ
+Supports engine_api 3 (VentOCR no longer saves every frame image; it creates only the images the engine opens. ENGINE_API.md §5.1).
+- Images are read only when extracting waveforms: the last frame of each breath, one per breath, in time order (as before). Processing that looks at every frame happens only inside initial_ocr
+- Frame counts are derived from the frame rate instead of being fixed: the window that smooths the sweep speed (101 frames at 10 fps), its minimum count (5), the maximum advance per frame (30 px; widened below 10 fps), and the frames used for the scale majority vote (5). At 10 fps the values are the same as 0.1.2
+- outputs: added alerts (the meaning of each Alert value and whether it is excluded from the accuracy evaluation)
+- The engine no longer uses Japanese: manifest labels, README, code comments and docstrings and .gitignore are in English. Entries for earlier versions below remain in Japanese
+- Check (VentOCR e0e306b, V600 sample, 4K, 385 s): 0.1.2 (all frames saved) and 0.2.0 (only opened images created; 86 images) give identical Frames.csv, Breaths.csv (except File_Name) and waveforms for 91 breaths. At 20 fps: 93 breaths (94 at 10 fps), scale values unchanged
 
 ## 0.1.2 (2026-10-21)
 解析の結果は 0.1.1 と同じ。チャートの1段目（outputs.waves の Pressure）の表示名を「Paw」に（列の名前は Pressure のまま）。

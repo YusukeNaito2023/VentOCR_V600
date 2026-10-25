@@ -1,51 +1,51 @@
 # V600 Engine Settings
-# 座標はすべて基準解像度（1920x1080）の画面座標。入力フレーム（収録は 3840x2160）はこの解像度に縮小してから使う。
-# 基準画像: layout.jpg（resource/V600_Sample.mp4。V600_VentOCR_Test.mp4 から切り出したもの）
+# All coordinates are screen coordinates at the base resolution (1920x1080). Input frames (recorded at 3840x2160) are downscaled to this resolution before use.
+# Reference image: layout.jpg (from resource/V600_Sample.mp4, which was cut from V600_VentOCR_Test.mp4)
 
 BASE_RESOLUTION = (1920, 1080)  # (width, height)
 
 # ------------------------------------------------------------
-# 数値の読み取り位置 (x, y, w, h)
+# Numeric value read positions (x, y, w, h)
 # ------------------------------------------------------------
 ROIs = {
-    "VT": (1500, 180, 155, 105),   # VT mL（リーク補正）。右の小さい 1000 / 250 はアラーム上下限なので含めない
+    "VT": (1500, 180, 155, 105),   # VT mL (leak-compensated). The small 1000 / 250 on the right are alarm upper/lower limits, so they are excluded
 }
 
-# 画面の確認用（波形画面でないフレームを Abnormal にする）: 波形の縦軸の目盛り数字の列
+# Screen check (frames that are not the waveform screen are marked Abnormal): the column of waveform vertical-axis tick numbers
 AXIS_LABEL_ROI = (0, 130, 62, 670)        # (x, y, w, h)
 AXIS_REFERENCE_IMAGE = "axis_reference.png"
 
 # ------------------------------------------------------------
-# 波形の描画領域と掃引
+# Waveform drawing area and sweep
 # ------------------------------------------------------------
-# 掃引は左端 X_LEFT から右へ描く。左端に戻る位置は一定ではない:
-#   - 右端（X_RIGHT）に達したとき
-#   - 右端の手前（x≈1100 以降）で次の呼吸が始まったとき（残りの右側は消去される）
-#   - 換気モードを変えたとき（画面全体が消去される）
-# 掃引の速さもモードで変わる（52 px/秒、64 px/秒 など）。そのため周期を仮定せず、毎フレームのペン先を検出して追跡する。
+# The sweep draws rightward from the left edge X_LEFT. The point at which it returns to the left edge is not fixed:
+#   - when it reaches the right edge (X_RIGHT)
+#   - when the next breath starts before the right edge (x≈1100 or beyond) (the remaining right side is erased)
+#   - when the ventilation mode is changed (the whole screen is cleared)
+# The sweep speed also depends on the mode (52 px/s, 64 px/s, etc.). So no period is assumed; the pen tip is detected and tracked in every frame.
 SWEEP_X_LEFT = 62
-SWEEP_X_RIGHT = 1362          # この列は描かれない
-SWEEP_PX_PER_SEC = 52.0       # 掃引の速さの既定値（検出できないときだけ使う）
-# ペン先の検出: 気道内圧の帯は常に塗られている（0 〜 PEEP）ので、ペン先の前の消去帯（約41px）が空白として見える。
-# 塗りの無い列の区間の左端の1つ手前をペン先とする（core.detect_pen）。
-SWEEP_GAP_ROWS = (170, 302)   # 気道内圧の帯のうち、ラベル文字（y<170）を除いた範囲
-SWEEP_GAP_LEN = (30, 55)      # 消去帯の幅（実測 41px）として認める範囲
-SWEEP_WRAP_JUMP = 100         # ペン先がこれ以上左に戻ったら折り返し（または消去）とみなす
+SWEEP_X_RIGHT = 1362          # this column is not drawn
+SWEEP_PX_PER_SEC = 52.0       # default sweep speed (used only when it cannot be detected)
+# Pen tip detection: the airway pressure band is always filled (0 to PEEP), so the erase band (~41px) ahead of the pen tip appears as a blank.
+# The pen tip is one column before the left end of a run of unfilled columns (core.detect_pen).
+SWEEP_GAP_ROWS = (170, 302)   # part of the airway pressure band excluding the label text (y<170)
+SWEEP_GAP_LEN = (30, 55)      # accepted range for the erase band width (measured 41px)
+SWEEP_WRAP_JUMP = 100         # if the pen tip moves left by at least this much, treat it as a wrap (or a clear)
 
 # ------------------------------------------------------------
-# 波形（CSV の列名 → 画面上の帯・縦軸）
+# Waveforms (CSV column name -> on-screen band and vertical axis)
 # ------------------------------------------------------------
-# 波形は基線（0）から値までを塗りつぶして描く。各列の値 = 基線から最も遠い塗りの端。
-# 色は濃い青（強制換気）と薄い青（自発呼吸）。どちらも色相 ≒ 104（OpenCV の HSV）。
+# Waveforms are drawn filled from the baseline (0) to the value. Value of each column = the edge of the fill farthest from the baseline.
+# Colors are dark blue (mandatory breaths) and light blue (spontaneous breaths). Both have hue ≈ 104 (OpenCV HSV).
 #
-# 縦軸のスケールは画面で変えられ（例: フロー ±100 → ±50、ボリューム 1000 → 500）、変えると過去の波形も描き直される。
-# そのため縦軸の最大値の数字（max_roi）を OCR し、呼吸ごとに「波形を切り出したフレームのスケール」で換算する。
-#   最大値 max は y=top、最小値 min は y=bottom。min は min_rule で決める（fixed: min_value、neg_max: -max、zero: 0）
-# top / bottom は画面上の既知の値で校正した（2026-10-11、V600_Sample.mp4 の PC-AC 区間、既定のスケール）:
-#   Pressure: 塗りの下端 y302 = 0、PEEP 5.0 → y275.3、吸気圧 20.0 → y195.5（5.33 px/cmH2O）→ 30 = y142、-5 = y328.7
-#   Volume:   塗りの下端 y793 = 0、VT 538 mL ↔ 塗りの高さ 99〜102 px（0.186 px/mL）→ 1000 = y607
-#   Flow:     基線 y468 = 0。吸気のフローの積分がボリュームの増加と一致する値（1.0 px/(L/min)）→ 100 = y368
-# スケールを変えた区間（フロー ±50 / ボリューム 500）でも、描き直された画面と抽出値が一致することを確認した。
+# The vertical-axis scale can be changed on screen (e.g. flow ±100 -> ±50, volume 1000 -> 500), and changing it redraws past waveforms too.
+# So the vertical-axis max number (max_roi) is OCR'd, and each breath is converted using "the scale of the frame the waveform was cut from".
+#   max is at y=top, min is at y=bottom. min is determined by min_rule (fixed: min_value, neg_max: -max, zero: 0)
+# top / bottom were calibrated against known on-screen values (2026-10-11, PC-AC segment of V600_Sample.mp4, default scale):
+#   Pressure: fill bottom edge y302 = 0, PEEP 5.0 -> y275.3, inspiratory pressure 20.0 -> y195.5 (5.33 px/cmH2O) -> 30 = y142, -5 = y328.7
+#   Volume:   fill bottom edge y793 = 0, VT 538 mL <-> fill height 99-102 px (0.186 px/mL) -> 1000 = y607
+#   Flow:     baseline y468 = 0. Value at which the integral of inspiratory flow matches the volume increase (1.0 px/(L/min)) -> 100 = y368
+# Verified that extracted values match the redrawn screen in segments with a changed scale (flow ±50 / volume 500) as well.
 WAVES = {
     "Pressure": {"band": (142, 330), "top": 142, "bottom": 328.7, "min_rule": "fixed", "min_value": -5,
                  "default_max": 30, "max_roi": (10, 142, 50, 22),
@@ -57,9 +57,9 @@ WAVES = {
                  "default_max": 1000, "max_roi": (10, 605, 50, 22),
                  "unit": "mL", "scale_prefix": "V"},
 }
-SCALE_OCR_ZOOM = 3    # 縦軸の数字は小さい（高さ14px）ので拡大してから OCR する
+SCALE_OCR_ZOOM = 3    # vertical-axis numbers are small (14px tall), so upscale before OCR
 
-# 帯の中で読まない範囲 (x0, y0, x1, y1): ラベル文字と「リーク補正が有効です。」の帯
+# Areas within the bands that are not read (x0, y0, x1, y1): label text and the "Leak compensation is active." banner
 WAVE_EXCLUDE = {
     "Pressure": [(0, 130, 310, 170)],
     "Flow":     [(0, 360, 250, 400), (735, 355, 1365, 386)],
@@ -69,9 +69,9 @@ WAVE_HUE = 104
 WAVE_HUE_TOL = 10
 WAVE_SAT_MIN = 40
 WAVE_VAL_MIN = 60
-WAVE_GAP_FILL = 6     # この幅（px）以下の欠けは直線で補間する
+WAVE_GAP_FILL = 6     # gaps up to this width (px) are filled by linear interpolation
 
-# 設定画面などのポップアップ（灰色がかった青の枠）が波形の上に出ているフレームは Abnormal にする
+# Frames where a popup (grayish-blue frame, e.g. a settings screen) appears over the waveforms are marked Abnormal
 POPUP_AREA = (62, 130, 1318, 680)          # (x, y, w, h)
-POPUP_HSV = ((100, 112), (60, 120), (110, 160))  # 色相・彩度・明度の範囲
-POPUP_MIN_PIXELS = 15000                   # 通常のフレームでも塗りの縁で 3000〜4000 画素ある。ポップアップが出ると 5万前後
+POPUP_HSV = ((100, 112), (60, 120), (110, 160))  # hue / saturation / value ranges
+POPUP_MIN_PIXELS = 15000                   # normal frames still have 3000-4000 such pixels at fill edges. With a popup, around 50,000
