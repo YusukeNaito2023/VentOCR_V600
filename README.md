@@ -6,16 +6,21 @@
 
 ## Description
 - **1 breath** = from one update of the VT display until the next update
-  - The display update lags the start of inspiration by about 0.6 s, so the boundary is placed `boundary_shift_sec` (default -1.0 s) before the update (cutting about 0.4 s before inspiration)
+  - The display update lags the start of inspiration by 0.2-1.4 s depending on the mode, so the boundary is first placed `boundary_shift_sec` (default -1.0 s) before the update.
+    The waveform boundary is then moved to the last inspiratory onset 0.15-1.6 s before the update (0.2.2), or, if there is none, to the onset nearest the boundary
   - A change counts as an update only when the new value lasts at least `stable_frames` (default 3) frames (misreads of 1-2 frames are ignored)
+    and comes at least `min_update_sec` (default 0.5 s; 0.2.2, was `min_breath_sec` 1.0 s) after the previous update
 - **Waveform-based splits** (`wave_split`, enabled by default): if VT has the same value as the previous breath, the display update is not visible and two breaths merge into one.
   If a breath's waveform contains a second inspiratory onset (flow > `split_flow` 5 L/min) and the volume has returned
   to baseline (fully exhaled) just before it, it is split off as a separate breath (`split_lead_sec` 0.4 s before the onset).
   - Fully exhaled = volume over the preceding 0.2 s ≤ max(`exhaled_ml` 30 mL, `exhaled_frac` 0.1 × preceding max volume)
   - If the next inspiration arrives before full exhalation (a single biphasic breath, e.g. Reverse Triggering), it is not split and Alert gets `RT?`
-  - Onsets whose new inspiratory volume is below `split_min_insp_ml` (50 mL) are ignored
+  - Onsets whose new inspiratory volume is below `split_min_insp_ml` (50 mL) are ignored, and so are onsets less than `min_breath_sec` (1.0 s)
+    after the previous split or before the end of the breath (0.2.2: the end limit was half of it; an onset just before the end belongs to the next breath)
   - Split breaths have `Boundary` = `Waveform` in Breaths.csv (breaths split by a VT update have `VT`, and the first breath has `Start`).
-    VT is the same value as the breath before the split (because the display did not change)
+    The display did not change inside the merged breath, so every piece but the last has `VT` = the value displayed during the breath (`VT_displayed`),
+    and the last piece has the value displayed after it (0.2.2; up to 0.2.1 every piece had the value displayed after it)
+  - A breath longer than one sweep is read from one image per sweep (the last frame before each return to the left edge), so it can be split too (0.2.2)
   - Breath numbers are reassigned in time order (BreathNumber in Frames.csv is updated to match)
 - **OCR**: VT (leak-compensated). The on-screen VT is the value of the "previous breath", so `VT` in Breaths.csv is the value displayed during the next breath,
   and `VT_displayed` is the value that was displayed during that breath
@@ -39,7 +44,7 @@ See `layout.jpg` (red boxes: OCR, green boxes: waveform bands, red lines: baseli
   (not set on breaths whose waveform was examined, since those are already split; remaining long breaths have a single inspiration followed by apnea)
 - `Abnormal`: a popup such as a settings screen was shown over the waveforms (no waveform is output)
 - `Partial`: the screen was cleared (e.g. mode change) and 30% or more of the waveform is missing
-- `Long`: a breath that returned to the left edge two or more times (only the last sweep is used)
+- `Long`: a breath longer than one sweep whose earlier sweeps could not be read (only the sweeps after the unreadable image are used). Up to 0.2.1 every breath longer than one sweep
 - `Fragment`: the first and last breaths of the recording
 
 ## Limitations

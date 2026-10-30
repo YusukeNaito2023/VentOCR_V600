@@ -8,6 +8,7 @@
     "boundary_shift_sec": -1.0,
     "stable_frames": 3,
     "min_breath_sec": 1.0,
+    "min_update_sec": 0.5,
     "abnormal_screen_diff": 8.0,
     "wave_split": true,
     "split_flow": 5.0,

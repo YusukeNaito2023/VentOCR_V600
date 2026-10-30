@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 from . import Settings
 
-ENGINE_VERSION = "0.2.1"
+ENGINE_VERSION = "0.2.2"
 VENTOCR_TESTED = "0.5.5"
 
 ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -379,7 +379,9 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
     opts = settings.get("post_ocr", {})
     fps = float(opts.get("fps", 10))
     triggers = [k for k in opts.get("breath_trigger", ["VT"]) if k in df.columns]
-    min_gap = max(1, int(round(float(opts.get("min_breath_sec", 1.0)) * fps)))
+    # 0.2.2: display updates may be 0.5 s apart (min_update_sec; was min_breath_sec = 1.0). Fast spontaneous breathing has breaths
+    # 0.9 s apart whose updates came 0.7 s apart; the second was dropped and the VT of the following breaths shifted by one
+    min_gap = max(1, int(round(float(opts.get("min_update_sec", 0.5)) * fps)))
     stable = max(1, int(opts.get("stable_frames", 3)))
     shift = int(round(float(opts.get("boundary_shift_sec", -1.0)) * fps))
     abnormal_thresh = float(opts.get("abnormal_screen_diff", 8.0))
@@ -554,6 +556,37 @@ def extract_column_values(frame, xs, scale_max=None):
     return out
 
 
+def _read_frame(path):
+    return cv2.imread(path) if os.path.isfile(path) else None
+
+
+def _read_chunk(img, p0, e, pen, u, wrap, scale_max):
+    """Waveform of the columns drawn in (frame p0, frame e] (at most one wrap in between) from the image of frame e.
+    Returns a DataFrame (Pressure, Flow, Volume, _sx = screen column)."""
+    wraps = [i for i in range(p0 + 1, e + 1) if wrap[i]]
+    first_x = int(np.floor(pen[p0])) + 1
+    x_end = int(np.floor(pen[e]))
+    if wraps:
+        # After the return: left edge to the pen tip at the end. Before the return: from the column after the pen tip at the start, the remaining number of columns (from the difference in continuous position)
+        n_after = max(x_end - Settings.SWEEP_X_LEFT + 1, 0)
+        n_before = max(int(round(u[e] - u[p0])) - n_after, 0)
+        xs = np.r_[np.arange(first_x, first_x + n_before), np.arange(Settings.SWEEP_X_LEFT, x_end + 1)]
+    else:
+        xs = np.arange(first_x, x_end + 1)
+    wave = pd.DataFrame(index=range(len(xs)))
+    if len(xs):
+        # Columns outside the drawing area (error in the estimated wrap position) keep their rows as NaN so the timing does not shift
+        inside = (xs >= Settings.SWEEP_X_LEFT) & (xs < Settings.SWEEP_X_RIGHT)
+        vals = extract_column_values(_normalize_frame(img), np.clip(xs, Settings.SWEEP_X_LEFT, Settings.SWEEP_X_RIGHT - 1), scale_max)
+        for name in Settings.WAVES:
+            wave[name] = np.round(np.where(inside, vals[name], np.nan), 2)
+    else:
+        for name in Settings.WAVES:
+            wave[name] = pd.Series(dtype=float)
+    wave["_sx"] = xs.astype(int)   # screen column (for Sweep_Start / End after boundaries are moved; not written out)
+    return wave
+
+
 def find_breath_splits(wave, rate, opts):
     """Look for the second and later inspiratory onsets within one breath's waveform.
 
@@ -587,9 +620,17 @@ def find_breath_splits(wave, rate, opts):
         while o > 0 and flow[o - 1] > 1.0:
             o -= 1
         cut = o - lead
-        if cut - last < min_len or n - cut < min_len // 2:
+        # 0.2.2: at least min_breath_sec before the end too (was half). An onset just before the end is the next breath's,
+        # whose boundary _snap_to_breaths moves to it; splitting there made a 0.7 s breath before the next VT boundary
+        if cut - last < min_len or n - cut < min_len:
             continue  # this breath's own inspiration, or too close to the edge
         before = vol[max(o - pre, 0):o]
+        if not np.isfinite(before).any():
+            # 0.2.2: the onset right after a gap (the V600 erases the right edge when it returns to the left edge, often just as a
+            # breath starts): the last points within 1 s before it
+            fin = np.flatnonzero(np.isfinite(vol[:o]))
+            if len(fin) and o - fin[-1] <= rate:
+                before = vol[fin[-pre:]]
         if not np.isfinite(before).any() or not np.isfinite(vol[last:o]).any():
             continue
         v_before = float(np.nanmedian(before))
@@ -632,6 +673,7 @@ ONSET_FRAC = 0.2        # from the point exceeding this fraction of the inspirat
 EXP_FLOW = 4.0          # expiratory flow (L/min, at least this far below 0)
 BACKTRACK_TOL = 0.3     # when backtracking to the foot, continue while the flow keeps dropping by at least this (L/min)
 TRIM_LEAD_SEC = 0.04    # keep data from this long before the inspiratory onset
+UPDATE_LAG_SEC = (0.15, 1.6)  # 0.2.2: the VT display updates this long after the inspiratory onset (MEDIBUS log 2026-10-27: 0.22-1.4 s, by mode)
 CONTIG_TOL_SEC = 0.15   # breaths are contiguous if the time after the previous breath's last point and the time of the next breath's first point differ by at most this (s) (allows for timing estimation error)
 
 
@@ -671,7 +713,8 @@ def _inspiration_onsets(flow, rate):
 
 
 def _snap_to_breaths(items):
-    """items: time-ordered list of dicts {"wave": DataFrame (Flow column, rows = points) or None, "t0": seconds, "rate": points/s}.
+    """items: time-ordered list of dicts {"wave": DataFrame (Flow column, rows = points) or None, "t0": seconds, "rate": points/s,
+    "update_t": seconds of the VT display update that started the breath (NaN for splits by waveform)}.
     Writes "wave" (the re-cut waveform), "t0", "rate", "trim_head", "trim_tail" (number of points trimmed/handed over from the original range; negative = points received from neighbors) into each item."""
     # Split into groups of contiguous breaths
     groups, cur = [], []
@@ -707,8 +750,17 @@ def _snap_to_breaths(items):
         lo = int(np.argmax(valid)) if valid.any() else 0
         first = on[on < (bounds[0] + bounds[1]) // 2]   # inspiratory onsets in the first half of the first breath
         new[0] = max(lo, int(first[0]) - lead) if len(first) else lo
-        # Boundaries between breaths: among inspiratory onsets between the midpoints of the adjacent breaths, the one closest to the original boundary
+        # Boundaries between breaths: among inspiratory onsets between the midpoints of the adjacent breaths, the one closest to the original boundary.
+        # 0.2.2: a boundary from a VT display update takes the last onset UPDATE_LAG_SEC before the update, if any (the lag is 0.2-1.4 s
+        # by mode, so with ~1 s breaths the boundary shifted by boundary_shift_sec was nearer the previous breath's onset)
+        on_t = times[on] if len(on) else np.array([])
         for j in range(1, len(g)):
+            ut = items[g[j]].get("update_t", np.nan)
+            if np.isfinite(ut) and len(on):
+                cand = on[(on_t >= ut - UPDATE_LAG_SEC[1]) & (on_t <= ut - UPDATE_LAG_SEC[0]) & (on - lead > new[j - 1])]
+                if len(cand):
+                    new[j] = int(cand[-1]) - lead
+                    continue
             a = (bounds[j - 1] + bounds[j]) // 2
             b = (bounds[j] + bounds[j + 1]) // 2
             cand = on[(on > a) & (on < b)]
@@ -791,35 +843,32 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
             pieces.append((row, None))
             continue
 
-        # Range: (pen tip of the previous frame, pen tip of the last frame]. Of the wraps in between, only the last is used
+        # Range: (pen tip of the previous frame, pen tip of the last frame], read from the last frame's image.
+        # 0.2.2: a breath with two or more wraps (longer than one sweep) is read in chunks with one wrap each, each from the image
+        # of the last frame before the next wrap (on it, the chunk's part before its wrap is still on the screen). Up to 0.2.1
+        # only the last sweep was read (Alert Long), so breaths merged by an unchanged VT could not be split before it.
+        # If a chunk's image cannot be opened, the breath starts after that chunk as before (Alert Long)
         p0 = s - 1 if s > 0 else s
         wraps = [i for i in range(p0 + 1, e + 1) if wrap[i]]
-        if len(wraps) >= 2:
-            alerts.append("Long")
-            p0 = wraps[-2]  # start right after the second-to-last wrap (anything earlier has been overwritten)
-            wraps = wraps[-1:]
-        first_x = int(np.floor(pen[p0])) + 1
-        x_end = int(np.floor(pen[e]))
-        if wraps:
-            # After the return: left edge to the pen tip at the end. Before the return: from the column after the pen tip at the start, the remaining number of columns (from the difference in continuous position)
-            n_after = max(x_end - Settings.SWEEP_X_LEFT + 1, 0)
-            n_before = max(int(round(u[e] - u[p0])) - n_after, 0)
-            xs = np.r_[np.arange(first_x, first_x + n_before), np.arange(Settings.SWEEP_X_LEFT, x_end + 1)]
-        else:
-            xs = np.arange(first_x, x_end + 1)
+        chunk_ends = [w - 1 for w in wraps[1:]] + [e]
+        chunk_starts = [p0] + chunk_ends[:-1]
+        scale_max = {name: b.get(f"{spec['scale_prefix']}_max") for name, spec in Settings.WAVES.items()}
+        chunks, x_start = [], p0
+        for c0, c1 in zip(chunk_starts, chunk_ends):
+            img = frame if c1 == e else _read_frame(frame_file(frame_no[c1]))
+            if img is None:
+                chunks, x_start = [], c1
+                if "Long" not in alerts:
+                    alerts.append("Long")
+                continue
+            chunks.append(_read_chunk(img, c0, c1, pen, u, wrap, scale_max))
+        xs = np.concatenate([c["_sx"].to_numpy(int) for c in chunks]) if chunks else np.array([], int)
         if len(xs) == 0:
             row["Alert"] = alerts
             pieces.append((row, None))
             continue
-
-        # Columns outside the drawing area (error in the estimated wrap position) keep their rows as NaN so the timing does not shift
-        inside = (xs >= Settings.SWEEP_X_LEFT) & (xs < Settings.SWEEP_X_RIGHT)
-        scale_max = {name: b.get(f"{spec['scale_prefix']}_max") for name, spec in Settings.WAVES.items()}
-        vals = extract_column_values(_normalize_frame(frame), np.clip(xs, Settings.SWEEP_X_LEFT, Settings.SWEEP_X_RIGHT - 1), scale_max)
-        wave = pd.DataFrame({"X": np.arange(len(xs)) + int(round(u[p0])) + 1})
-        for name in Settings.WAVES:
-            wave[name] = np.round(np.where(inside, vals[name], np.nan), 2)
-        wave["_sx"] = xs   # screen column (for Sweep_Start / End after boundaries are moved; not written out)
+        wave = pd.concat(chunks, ignore_index=True)
+        wave.insert(0, "X", np.arange(len(xs)) + int(round(u[x_start])) + 1)
 
         # Time: interpolate from the mapping between the pen tip's continuous position u and time (stays correct when the sweep speed changes)
         t_first = float(np.interp(u[e] - len(xs) + 1, u, times))
@@ -833,6 +882,11 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
         edges = [0, *cuts, len(xs)]
         for i, (a, z) in enumerate(zip(edges[:-1], edges[1:])):
             r = dict(row)
+            if i < len(edges) - 2:
+                # 0.2.2: the display did not change inside the merged breath, so the value shown during the next piece (= this piece's
+                # value) is the one shown during this breath. Only the last piece takes the next update. Up to 0.2.1 every piece took it
+                for key in OCR_KEYS:
+                    r[key] = row.get(f"{key}_displayed", np.nan)
             t0 = t_first + a / rate
             f_start = int(b["Frame"]) if i == 0 else int(np.clip(round(t0 * fps), b["Frame"], b["End_Frame"]))
             r["Frame"] = f_start
@@ -854,8 +908,10 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
 
     # Align waveform boundaries to inspiratory onsets (breath waveforms are contiguous, so points are moved between adjacent breaths)
     if opts.get("trim_to_breath", True):
+        shift = int(round(float(opts.get("boundary_shift_sec", -1.0)) * fps))
         items = [{"wave": w, "t0": float(r["Wave_T0"]) if w is not None else np.nan,
-                  "rate": float(r["Wave_Rate"]) if w is not None else np.nan} for r, w in pieces]
+                  "rate": float(r["Wave_Rate"]) if w is not None else np.nan,
+                  "update_t": (int(r["Frame"]) - shift) / fps if r["Boundary"] == "VT" else np.nan} for r, w in pieces]
         _snap_to_breaths(items)
         for (r, _), it in zip(pieces, items):
             w = it["wave"]

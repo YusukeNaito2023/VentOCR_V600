@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 0.2.2 (2026-10-30)
+Fixes the three weaknesses found by comparing 0.2.1 with the ventilator's MEDIBUS log (2026-10-27 recording, 32 min, 387 breaths).
+- Breaths longer than one sweep are read from one image per sweep (the last frame before each return to the left edge); up to 0.2.1 only the last sweep was read (Alert Long). Breaths merged because VT showed the same value several times can now be split before the last sweep. `Long` is now set only when an earlier image cannot be read
+- Split pieces: every piece but the last has `VT` = the value displayed during the breath (the display did not change inside it); only the last piece has the value displayed after it. Up to 0.2.1 every piece had the value displayed after it
+- Waveform splits need `min_breath_sec` before the end of the breath too (was half). An onset just before the end is the next breath's; splitting there made a 0.7 s breath before the next VT boundary
+- An onset right after a gap (the right edge is erased when the sweep returns early, often just as a breath starts) can split: the volume before it is taken from the last points within 1 s
+- Display updates may be 0.5 s apart (new option `min_update_sec`; was `min_breath_sec` 1.0 s). Fast spontaneous breathing had updates 0.7 s apart; the second was dropped and the VT of the following breath shifted
+- A waveform boundary from a VT update moves to the last inspiratory onset 0.15-1.6 s before the update (the lag is 0.2-1.4 s by mode in the log), if that onset is after the previous boundary; otherwise to the onset nearest the boundary as before. With ~1 s breaths the boundary 1.0 s before the update was nearer the previous breath's onset
+- Check against the MEDIBUS log (1080p30, 10 fps; 0.2.1 → 0.2.2): matched breaths 378 → 383 of 387; missed outside flagged breaths 5 → 0, extra outside flagged breaths 4 → 0 (the 4 missed are under 2 settings popups, flagged Abnormal). VT on clean breaths: bias -0.06 → 0.05 mL, 95% LoA ±8.2 → ±2.8 mL, exact 79.2% → 96.5%, within 5 mL 98.6% → 99.2%. Waveforms unchanged (r 0.998 / 0.991 / 0.998)
+- Check (V600 sample, 4K, 10 fps): 3 more display updates (VT values shown 0.6-0.9 s), 92 breaths (90), one Long breath read whole; VT of split pieces as above. Analysis time: extract_waves 22.8 s vs 28.2 / 24.2 s for 0.2.1 in the same conditions (one more image opened)
+
 ## 0.2.1 (2026-10-30)
 Fixes recordings that are brighter than the sample being analysed as a single Abnormal breath.
 - The screen check (axis label column vs axis_reference.png) shifts the column's background level to the reference's before comparing. In the 2026-10-27 1080p recording (V600 data logger test) the background is 255 instead of 232, which alone gave Screen_Diff ≈ 24 (threshold 8): every frame was Abnormal, no VT update was used, and 32 min became 1 breath. With the shift it is ≈ 2.4; popups over the waveforms (e.g. the settings panel) are still Abnormal
