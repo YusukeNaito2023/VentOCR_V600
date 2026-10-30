@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 from . import Settings
 
-ENGINE_VERSION = "0.2.0"
+ENGINE_VERSION = "0.2.1"
 VENTOCR_TESTED = "0.5.5"
 
 ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -132,6 +132,18 @@ def _load_axis_reference():
     path = os.path.join(ENGINE_DIR, Settings.AXIS_REFERENCE_IMAGE)
     img = cv2.imread(path, cv2.IMREAD_GRAYSCALE) if os.path.isfile(path) else None
     return None if img is None else img.astype(np.int16)
+
+
+def screen_diff(gray, axis_ref):
+    """Mean absolute difference between the axis label column and the reference image.
+
+    0.2.1: the column's background level is shifted to the reference's before comparing (median of each = the background).
+    Recordings differ in brightness (background 232 in V600_Sample.mp4, 255 in the 2026-10-27 1080p recording), which
+    alone gave a difference of 24 and marked every frame Abnormal. The tick numbers' pattern still has to match.
+    """
+    roi = _crop(gray, Settings.AXIS_LABEL_ROI).astype(np.int16)
+    roi = np.clip(roi + int(np.median(axis_ref) - np.median(roi)), 0, 255)
+    return round(float(np.abs(roi - axis_ref).mean()), 2)
 
 
 def _format_time(frame, fps):
@@ -275,7 +287,7 @@ def initial_ocr(frames, total_frames, subfolder, settings={},
             row["Sweep_Raw"] = detect_pen(frame)
             row["Popup_Px"] = popup_pixels(frame)
             if axis_ref is not None:
-                row["Screen_Diff"] = round(float(np.abs(_crop(gray, Settings.AXIS_LABEL_ROI).astype(np.int16) - axis_ref).mean()), 2)
+                row["Screen_Diff"] = screen_diff(gray, axis_ref)
             else:
                 row["Screen_Diff"] = np.nan
 

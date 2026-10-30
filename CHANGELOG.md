@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 0.2.1 (2026-10-30)
+Fixes recordings that are brighter than the sample being analysed as a single Abnormal breath.
+- The screen check (axis label column vs axis_reference.png) shifts the column's background level to the reference's before comparing. In the 2026-10-27 1080p recording (V600 data logger test) the background is 255 instead of 232, which alone gave Screen_Diff ≈ 24 (threshold 8): every frame was Abnormal, no VT update was used, and 32 min became 1 breath. With the shift it is ≈ 2.4; popups over the waveforms (e.g. the settings panel) are still Abnormal
+- Check (VentOCR 0.8.0, V600 sample, 4K, 10 fps): Frames.csv (except Screen_Diff, which moves by at most 1.8), Breaths.csv (except File_Name) and waveforms identical to 0.2.0; same 84 Abnormal frames
+- Check (2026-10-27 recording, 1080p30, 3 min from 270 s, 10 fps): 35 breaths, the same as the 35 inspiration starts in the MEDIBUS log over that window
+
 ## 0.2.0 (2026-10-25)
 Supports engine_api 3 (VentOCR no longer saves every frame image; it creates only the images the engine opens. ENGINE_API.md §5.1).
 - Images are read only when extracting waveforms: the last frame of each breath, one per breath, in time order (as before). Processing that looks at every frame happens only inside initial_ocr
