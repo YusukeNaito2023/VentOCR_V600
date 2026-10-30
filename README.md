@@ -10,6 +10,11 @@
     The waveform boundary is then moved to the last inspiratory onset 0.15-1.6 s before the update (0.2.2), or, if there is none, to the onset nearest the boundary
   - A change counts as an update only when the new value lasts at least `stable_frames` (default 3) frames (misreads of 1-2 frames are ignored)
     and comes at least `min_update_sec` (default 0.5 s; 0.2.2, was `min_breath_sec` 1.0 s) after the previous update
+  - Updates are also read while a popup covers the waveforms, as long as the "VT mL" label is visible (Frames.csv `VT_Label` ≥ 0.4,
+    the overlap of its text with `vt_label_reference.png`; `VT_Visible` = 1). 0.2.3; up to 0.2.2 the breaths under a popup merged into one
+  - A breath with a waveform starts at its inspiratory onset: `Frame`, `Time`, `Duration` and `Start_File_Name` / `End_File_Name`
+    (the span the app plays) follow `Wave_T0` (0.2.3, `frames_from_wave`; up to 0.2.2 they started `boundary_shift_sec` before the update).
+    The first breath and breaths without a waveform keep the frames from the update. `VT` / `VT_displayed` do not change
 - **Waveform-based splits** (`wave_split`, enabled by default): if VT has the same value as the previous breath, the display update is not visible and two breaths merge into one.
   If a breath's waveform contains a second inspiratory onset (flow > `split_flow` 5 L/min) and the volume has returned
   to baseline (fully exhaled) just before it, it is split off as a separate breath (`split_lead_sec` 0.4 s before the onset).
@@ -34,6 +39,9 @@
   - The speed depends on the mode (52 px/s in the sample, 64 px/s in the PC-BIPAP segment)
   - Pen tip = in the airway pressure band, one column before the left end of the unfilled columns (erase band, about 41px wide)
   - Time of each point = `Wave_T0` + row index / `Wave_Rate` (Breaths.csv)
+  - A breath whose image has a popup is read from the first later image without one (up to 30 s later); columns the pen has
+    redrawn by then are missing (0.2.3). A breath after a breath without a waveform is read from 1.75 s earlier, so its
+    inspiratory onset is included (0.2.3)
 
 ## Expected Layout
 See `layout.jpg` (red boxes: OCR, green boxes: waveform bands, red lines: baselines, gray boxes: areas not read, blue box: vertical-axis ticks used for the screen check).
@@ -42,7 +50,8 @@ See `layout.jpg` (red boxes: OCR, green boxes: waveform bands, red lines: baseli
 - `RT?`: biphasic breath where the next inspiration came before full exhalation (e.g. Reverse Triggering). Not split
 - `Merged?`: a breath at least 1.7x the median duration of the surrounding breaths that could not be split by waveform because it has no waveform
   (not set on breaths whose waveform was examined, since those are already split; remaining long breaths have a single inspiration followed by apnea)
-- `Abnormal`: a popup such as a settings screen was shown over the waveforms (no waveform is output)
+- `Abnormal`: a popup or another screen, and no image without it showed the breath's waveform (no waveform is output). 0.2.3: breaths read
+  from a later image have no `Abnormal` Alert (the `Abnormal` column of Breaths.csv still says whether any frame had a popup)
 - `Partial`: the screen was cleared (e.g. mode change) and 30% or more of the waveform is missing
 - `Long`: a breath longer than one sweep whose earlier sweeps could not be read (only the sweeps after the unreadable image are used). Up to 0.2.1 every breath longer than one sweep
 - `Fragment`: the first and last breaths of the recording

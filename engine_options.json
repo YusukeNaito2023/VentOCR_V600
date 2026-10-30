@@ -17,6 +17,7 @@
     "split_min_insp_ml": 50.0,
     "exhaled_ml": 30.0,
     "exhaled_frac": 0.1,
-    "trim_to_breath": true
+    "trim_to_breath": true,
+    "frames_from_wave": true
   }
 }

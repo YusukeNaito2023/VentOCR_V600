@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## 0.2.3 (2026-10-30)
+Addresses the user's breath comments on the 2026-10-27 recording (0.2.1 analysis, BN 3, 5, 6, 10).
+- Popups over the waveforms (e.g. the settings panel) no longer hide VT display updates while the "VT mL" label is visible
+  (new Frames.csv columns `VT_Label` = overlap of its text with `vt_label_reference.png`, 0.64 in the 1080p recording and 0.985 in the
+  sample, 0.12 or less elsewhere; `VT_Visible`). VT values come from those frames too. Up to 0.2.2 every breath under a popup merged into one
+  breath without a waveform (BN 3-4: 25 s, 5 breaths)
+- A breath whose image has a popup is read from the first later image without one (up to 30 s later); columns the pen has redrawn by
+  then are missing. Such breaths no longer get the `Abnormal` Alert (kept for breaths with no readable image)
+- A breath after a breath without a waveform is read from 1.75 s earlier, and its start is cut at the last inspiratory onset before
+  its VT update (BN 5 started 0.3 s into its inspiration)
+- `Frame`, `Time`, `Duration`, `Start_File_Name`, `End_File_Name` and `End_Frame` of breaths with a waveform follow the inspiratory onset (`Wave_T0`)
+  instead of `boundary_shift_sec` before the VT update (option `frames_from_wave`, default ON). The VT update lags the onset by 0.2-1.4 s,
+  so Duration was 4.0 / 5.3 s for 5 s breaths and the app's capture of a breath started in the previous one (BN 6, 10). The first breath and
+  breaths without a waveform keep the frames from the update; VT / VT_displayed unchanged.
+  The early return to the left edge (BN 6 comment) was already handled: the waveforms of those breaths match the ventilator log
+- Check against the MEDIBUS log (0.2.2 → 0.2.3): matched breaths 383 → 387 of 387 (the 6 breaths under the 2 popups now have waveforms,
+  r 0.983-0.999, VT exact); breath start (Frame) vs the log's onset median -0.32 → -0.005 s, 95% within 0.62 → 0.11 s; Duration off by
+  more than 0.5 s 58 → 3 of 385; VT on clean breaths 96.5% → 96.6% exact, LoA ±2.7 mL; waveforms unchanged
+- Check (V600 sample, 4K): the 3 breaths under the popup (91-106 s) became 4 breaths with waveforms; other breaths unchanged except Frame / Duration.
+  Analysis time in the same conditions: extract_waves 15.8 s (0.2.2: 14.4 s; 2 more images opened); full 32-min video 325 s (0.2.1: 320 s)
+
 ## 0.2.2 (2026-10-30)
 Fixes the three weaknesses found by comparing 0.2.1 with the ventilator's MEDIBUS log (2026-10-27 recording, 32 min, 387 breaths).
 - Breaths longer than one sweep are read from one image per sweep (the last frame before each return to the left edge); up to 0.2.1 only the last sweep was read (Alert Long). Breaths merged because VT showed the same value several times can now be split before the last sweep. `Long` is now set only when an earlier image cannot be read

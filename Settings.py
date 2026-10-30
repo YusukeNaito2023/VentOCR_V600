@@ -15,6 +15,13 @@ ROIs = {
 AXIS_LABEL_ROI = (0, 130, 62, 670)        # (x, y, w, h)
 AXIS_REFERENCE_IMAGE = "axis_reference.png"
 
+# 0.2.3: the "VT mL" label next to the VT value. A popup over the waveforms (Abnormal) leaves it visible, so VT display updates
+# are still used there. Visible = overlap (IoU) of its dark text pixels with the reference's at least VT_LABEL_MIN_IOU
+# (normal and popup frames 0.64 in both the 4K sample and the 2026-10-27 1080p recording; other parts of the screen 0.12 or less)
+VT_LABEL_ROI = (1395, 155, 95, 35)        # (x, y, w, h)
+VT_LABEL_REFERENCE_IMAGE = "vt_label_reference.png"
+VT_LABEL_MIN_IOU = 0.4
+
 # ------------------------------------------------------------
 # Waveform drawing area and sweep
 # ------------------------------------------------------------
