@@ -1,5 +1,30 @@
 # CHANGELOG
 
+## 0.2.4 (2026-10-30)
+Addresses the user's breath comments on the 0.2.3 analysis of the 2026-10-27 recording. Breath boundaries, VT and waveforms are unchanged.
+- New Breaths.csv column `Trigger` (A: patient-triggered / C: machine / blank: unknown), declared in outputs.breath_values. The V600 draws a
+  lung icon below the airway pressure band, centred on the inspiratory onset, at each patient-triggered breath; A = an icon in the first
+  20 columns of the breath (comment BN 281). Against the MEDIBUS log: SPN-CPAP/PS 28 of 28 A, mandatory breaths 351 C, 5 blank
+- New Alert `Popup`: a popup was over the waveforms during the breath and its waveform was read from the screen after it closed
+  (comments BN 4, 5, 86, 87; 0.2.3 read them without saying so)
+- New Alert `Clipped`: a waveform goes beyond the axis line or under the label / "Leak compensation" banner at the top of its band, so values
+  beyond it are not on the screen (comment BN 291: VT 551 mL with the 500 mL Volume axis; the engine read 508 or, under the label, 433).
+  Only a solid fill from the baseline counts (a run of at least 3 px covering 90% of the rows); below the baseline only where the axis goes
+  below it (Flow, Paw), so a lone antialiased pixel under the Volume baseline is not a clip
+- New Alert `Short`: shorter than 0.5 s
+- No `RT?` Alert any more (comment BN 304: asynchrony is tagged by the user). Biphasic breaths are still not split
+- A VT update with no inspiratory onset of its own whose boundary would be less than 0.5 s after the previous one now starts 0.5 s before
+  the update (two inspirations without a pause in flow). 0.2.3 put it on the previous breath's onset and left a 1-point breath (comment BN 301)
+- The "VT mL" label check counts light text too, so popups in Night Mode do not hide VT updates (VT_Label was 0 in Night Mode; comment BN 314)
+- None of the new Alerts is excluded from accuracy (the user decides)
+- Check against the MEDIBUS log (0.2.3 → 0.2.4): matched 387/387, VT and waveforms identical, Duration off by more than 0.5 s 3 → 1.
+  Clipped: 11 true (Volume above the axis or under the label, a Flow peak under the label). Three Night Mode breaths were flagged by a lone
+  pixel under the Volume baseline (fixed; re-run on frame windows: the false flag is gone and the true ones remain — two of the three did
+  not reproduce in the window runs, so their absence is still to be confirmed on a full run)
+- Check (V600 sample, 4K): breaths and waveforms identical to 0.2.3; new Alerts Clipped 7 (traces under a label or the banner), Popup 4, Short 1
+- The comments "読めてない" on breaths at the left edge of the screen (BN 21, 29, 49 …) were the app's chart: a saved horizontal zoom in
+  "screen" mode hid the start of those breaths. The data was complete; reported to the app
+
 ## 0.2.3 (2026-10-30)
 Addresses the user's breath comments on the 2026-10-27 recording (0.2.1 analysis, BN 3, 5, 6, 10).
 - Popups over the waveforms (e.g. the settings panel) no longer hide VT display updates while the "VT mL" label is visible

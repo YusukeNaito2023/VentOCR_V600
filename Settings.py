@@ -22,6 +22,13 @@ VT_LABEL_ROI = (1395, 155, 95, 35)        # (x, y, w, h)
 VT_LABEL_REFERENCE_IMAGE = "vt_label_reference.png"
 VT_LABEL_MIN_IOU = 0.4
 
+# 0.2.4: patient trigger. The V600 draws a lung icon (about 22 px wide, centred on the inspiratory onset) just below the airway
+# pressure band at each patient-triggered breath. Icon column = at least TRIGGER_ICON_MIN_PX pixels in TRIGGER_ICON_ROWS that
+# differ from the strip's background by more than 60 (either way, for Night Mode)
+TRIGGER_ICON_ROWS = (305, 330)
+TRIGGER_ICON_MIN_PX = 3
+TRIGGER_ICON_SEARCH_PX = 20   # columns from the breath's first point (2 points before the onset) where the icon is looked for
+
 # ------------------------------------------------------------
 # Waveform drawing area and sweep
 # ------------------------------------------------------------

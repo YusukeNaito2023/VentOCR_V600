@@ -19,7 +19,8 @@
   If a breath's waveform contains a second inspiratory onset (flow > `split_flow` 5 L/min) and the volume has returned
   to baseline (fully exhaled) just before it, it is split off as a separate breath (`split_lead_sec` 0.4 s before the onset).
   - Fully exhaled = volume over the preceding 0.2 s ≤ max(`exhaled_ml` 30 mL, `exhaled_frac` 0.1 × preceding max volume)
-  - If the next inspiration arrives before full exhalation (a single biphasic breath, e.g. Reverse Triggering), it is not split and Alert gets `RT?`
+  - If the next inspiration arrives before full exhalation (a single biphasic breath, e.g. Reverse Triggering), it is not split
+    (no Alert since 0.2.4: asynchrony is tagged by the user; up to 0.2.3 `RT?`)
   - Onsets whose new inspiratory volume is below `split_min_insp_ml` (50 mL) are ignored, and so are onsets less than `min_breath_sec` (1.0 s)
     after the previous split or before the end of the breath (0.2.2: the end limit was half of it; an onset just before the end belongs to the next breath)
   - Split breaths have `Boundary` = `Waveform` in Breaths.csv (breaths split by a VT update have `VT`, and the first breath has `Start`).
@@ -29,6 +30,10 @@
   - Breath numbers are reassigned in time order (BreathNumber in Frames.csv is updated to match)
 - **OCR**: VT (leak-compensated). The on-screen VT is the value of the "previous breath", so `VT` in Breaths.csv is the value displayed during the next breath,
   and `VT_displayed` is the value that was displayed during that breath
+- **Trigger** (0.2.4): `Trigger` in Breaths.csv = `A` (patient-triggered) / `C` (machine) / blank (unknown). The V600 draws a lung icon
+  just below the airway pressure band, centred on the inspiratory onset, at each patient-triggered breath (rows 305-330; dark in the day
+  theme, light in Night Mode). A = an icon in the first 20 columns of the breath's waveform; blank = no waveform, the first or last
+  breath, or those columns missing (screen cleared, redrawn after a popup)
 - **Waveforms**: Pressure, Flow, Volume. Columns of BreathCSVs/<n>.csv are X, Pressure, Flow, Volume
   - Waveforms are drawn filled from the baseline to the value (mandatory breaths in dark blue, spontaneous breaths in light blue). Value of each column = the edge of the fill farthest from the baseline
   - The vertical-axis scale (flow ±100/±50, volume 1000/500, etc.) can be changed on screen, and past waveforms are redrawn too.
@@ -47,11 +52,15 @@
 See `layout.jpg` (red boxes: OCR, green boxes: waveform bands, red lines: baselines, gray boxes: areas not read, blue box: vertical-axis ticks used for the screen check).
 
 ## Alert (Breaths.csv)
-- `RT?`: biphasic breath where the next inspiration came before full exhalation (e.g. Reverse Triggering). Not split
 - `Merged?`: a breath at least 1.7x the median duration of the surrounding breaths that could not be split by waveform because it has no waveform
   (not set on breaths whose waveform was examined, since those are already split; remaining long breaths have a single inspiration followed by apnea)
 - `Abnormal`: a popup or another screen, and no image without it showed the breath's waveform (no waveform is output). 0.2.3: breaths read
   from a later image have no `Abnormal` Alert (the `Abnormal` column of Breaths.csv still says whether any frame had a popup)
+- `Popup` (0.2.4): a popup was shown over the waveforms during the breath; its waveform was read from the screen after the popup closed
+  (the trace keeps being drawn under the popup). Not excluded from accuracy
+- `Clipped` (0.2.4): a waveform reaches the edge of its band (or the label at the top of the band), so values beyond the axis are not on
+  the screen (e.g. Volume above 500 mL with the 500 mL axis). VT is read from the number and is not affected. Not excluded from accuracy
+- `Short` (0.2.4): shorter than 0.5 s (a boundary that could not be placed well). Not excluded from accuracy
 - `Partial`: the screen was cleared (e.g. mode change) and 30% or more of the waveform is missing
 - `Long`: a breath longer than one sweep whose earlier sweeps could not be read (only the sweeps after the unreadable image are used). Up to 0.2.1 every breath longer than one sweep
 - `Fragment`: the first and last breaths of the recording

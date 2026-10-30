@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 from . import Settings
 
-ENGINE_VERSION = "0.2.3"
+ENGINE_VERSION = "0.2.4"
 VENTOCR_TESTED = "0.5.5"
 
 ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -147,9 +147,10 @@ def screen_diff(gray, axis_ref):
 
 
 def _text_mask(gray_roi):
-    """Dark text pixels of a region (at least 60 below its background = median)."""
+    """Text pixels of a region: at least 60 away from its background (= median). 0.2.4: either way, so that light text on
+    the dark background of Night Mode counts too (0.2.3 took only dark text: VT_Label was 0 in Night Mode)."""
     g = gray_roi.astype(np.int16)
-    return g < np.median(g) - 60
+    return np.abs(g - np.median(g)) > 60
 
 
 def _load_vt_label_reference():
@@ -556,22 +557,37 @@ def extract_column_values(frame, xs, scale_max=None):
     xs = np.asarray(xs, int)
     out = {}
     present = None
+    clip = np.zeros(len(xs), bool)
     for name, spec in Settings.WAVES.items():
         y0, y1 = spec["band"]
         m = mask[y0:y1].copy()
+        top = np.zeros(m.shape[1], int)   # first row that can be read in each screen column (below an excluded label at the top)
         for (ex0, ey0, ex1, ey1) in Settings.WAVE_EXCLUDE.get(name, []):
             m[max(ey0 - y0, 0):max(ey1 - y0, 0), ex0:ex1] = False
+            if ey0 <= y0 + 1:
+                top[ex0:ex1] = np.maximum(top[ex0:ex1], ey1 - y0)
         sub = m[:, xs]
+        top = top[xs]
         _, _, zero_y, k = wave_scale(name, (scale_max or {}).get(name))
         zero = int(round(zero_y)) - y0
+        axis_top, axis_bottom = int(np.floor(spec["top"])) - y0, int(np.ceil(spec["bottom"])) - y0
         vals = np.zeros(len(xs))
         for c in np.flatnonzero(sub.any(0)):
             ys = np.flatnonzero(sub[:, c])
             up, dn = ys[ys < zero], ys[ys > zero]
+            # 0.2.4 Clipped: the fill goes beyond the axis max / min line (the V600 stops drawing just past it, e.g. Volume at 508
+            # with the 500 axis), or reaches the label excluded at the top of the band (Volume 433 under "ボリューム mL")
+            # Only a solid fill from the baseline counts (at least 90% of the rows in between): in Night Mode the edge of a label or
+            # the "Leak compensation" banner and the dotted lines at the top of a band pass the colour test but are separate from it
+            # A run of at least 3 px: a lone antialiased pixel next to the baseline (Volume, whose axis bottom is the baseline) is not a clip
             if len(up) and len(up) >= len(dn):
                 vals[c] = zero - up.min()
+                solid = len(up) >= 3 and len(up) >= 0.9 * (zero - up.min())
+                clip[c] |= solid and ((up.min() < axis_top) or (top[c] > 0 and up.min() <= top[c]))
             elif len(dn):
                 vals[c] = -(dn.max() - zero)
+                solid = len(dn) >= 3 and len(dn) >= 0.9 * (dn.max() - zero)
+                clip[c] |= solid and axis_bottom - zero >= 3 and dn.max() > axis_bottom
         if name == "Pressure":
             gy0, gy1 = Settings.SWEEP_GAP_ROWS
             present = mask[gy0:gy1][:, xs].sum(0) >= 2
@@ -579,11 +595,28 @@ def extract_column_values(frame, xs, scale_max=None):
     for name in out:
         v = np.where(present, out[name], np.nan)
         out[name] = _fill_small_gaps(v, Settings.WAVE_GAP_FILL)
+    out["_clip"] = clip & present
+    # 0.2.4: patient-trigger icon below the airway pressure band (Settings.TRIGGER_ICON_ROWS)
+    r0, r1 = Settings.TRIGGER_ICON_ROWS
+    strip = _to_gray(frame[r0:r1, Settings.SWEEP_X_LEFT:Settings.SWEEP_X_RIGHT]).astype(np.int16)
+    icon = (np.abs(strip - np.median(strip)) > 60).sum(0) >= Settings.TRIGGER_ICON_MIN_PX
+    out["_icon"] = icon[np.clip(xs - Settings.SWEEP_X_LEFT, 0, len(icon) - 1)] & present
     return out
 
 
 HEAD_EXTRA_SEC = 1.75   # 0.2.3: read this much before a breath whose previous breath has no waveform (VT update lag up to 1.4 s + margin)
 POPUP_WAIT_SEC = 30.0   # 0.2.3: look this far after a popup image for one without it (a sweep takes about 20-25 s)
+
+
+def _trigger(wave, alerts):
+    """0.2.4: Breaths.csv Trigger = "A" (patient-triggered: the lung icon at the inspiratory onset), "C" (no icon) or "" (unknown:
+    no waveform, the first or last breath, or the columns at the onset are missing)."""
+    if wave is None or "_icon" not in wave or "Fragment" in alerts:
+        return ""
+    head = wave.iloc[:Settings.TRIGGER_ICON_SEARCH_PX]
+    if head["_icon"].fillna(False).astype(bool).any():
+        return "A"
+    return "" if len(head) == 0 or head["Pressure"].isna().mean() > 0.5 else "C"
 
 
 def _read_frame(path):
@@ -625,9 +658,13 @@ def _read_chunk(img, p0, e, pen, u, wrap, scale_max):
         vals = extract_column_values(_normalize_frame(img), np.clip(xs, Settings.SWEEP_X_LEFT, Settings.SWEEP_X_RIGHT - 1), scale_max)
         for name in Settings.WAVES:
             wave[name] = np.round(np.where(inside, vals[name], np.nan), 2)
+        wave["_clip"] = vals["_clip"] & inside
+        wave["_icon"] = vals["_icon"] & inside
     else:
         for name in Settings.WAVES:
             wave[name] = pd.Series(dtype=float)
+        wave["_clip"] = pd.Series(dtype=bool)
+        wave["_icon"] = pd.Series(dtype=bool)
     wave["_sx"] = xs.astype(int)   # screen column (for Sweep_Start / End after boundaries are moved; not written out)
     return wave
 
@@ -718,6 +755,8 @@ ONSET_FRAC = 0.2        # from the point exceeding this fraction of the inspirat
 EXP_FLOW = 4.0          # expiratory flow (L/min, at least this far below 0)
 BACKTRACK_TOL = 0.3     # when backtracking to the foot, continue while the flow keeps dropping by at least this (L/min)
 TRIM_LEAD_SEC = 0.04    # keep data from this long before the inspiratory onset
+FALLBACK_LAG_SEC = 0.5        # 0.2.4: a VT update with no inspiratory onset of its own starts this long before the update (median lag of fast breaths)
+SHORT_SEC = 0.5               # 0.2.4: Alert Short for breaths shorter than this
 UPDATE_LAG_SEC = (0.15, 1.6)  # 0.2.2: the VT display updates this long after the inspiratory onset (MEDIBUS log 2026-10-27: 0.22-1.4 s, by mode)
 CONTIG_TOL_SEC = 0.15   # breaths are contiguous if the time after the previous breath's last point and the time of the next breath's first point differ by at most this (s) (allows for timing estimation error)
 
@@ -816,10 +855,22 @@ def _snap_to_breaths(items):
                     continue
             a = (bounds[j - 1] + bounds[j]) // 2
             b = (bounds[j] + bounds[j + 1]) // 2
-            cand = on[(on > a) & (on < b)]
+            ok = (on > a) & (on < b)
+            if np.isfinite(ut):
+                # 0.2.4: a VT update's onset is before the update and after the previous boundary (0.2.3 could take the previous
+                # breath's onset again and leave a 1-point breath)
+                ok &= (on - lead > new[j - 1]) & (on_t <= ut - UPDATE_LAG_SEC[0])
+            cand = on[ok]
             if len(cand):
                 o = int(cand[np.argmin(np.abs(cand - bounds[j]))])
                 new[j] = o - lead
+            elif np.isfinite(ut) and times[min(new[j], len(times) - 1)] - times[min(new[j - 1], len(times) - 1)] < SHORT_SEC:
+                # 0.2.4: no onset of its own and the boundary from the update is less than SHORT_SEC after the previous one (two
+                # inspirations without a pause in flow; 0.2.3 left a 1-point breath): FALLBACK_LAG_SEC before the update.
+                # Otherwise the boundary from the update stays (as up to 0.2.3)
+                k = int(np.searchsorted(times, ut - FALLBACK_LAG_SEC))
+                if new[j - 1] < k < len(times):
+                    new[j] = k
         # Tail: empty rows and a final inspiration with no following expiration (partway into the next breath's inspiration)
         hi = len(cat) - int(np.argmax(valid[::-1])) if valid.any() else len(cat)
         new[-1] = hi
@@ -916,7 +967,7 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
         chunk_ends = [w - 1 for w in wraps[1:]] + [e]
         chunk_starts = [p0] + chunk_ends[:-1]
         scale_max = {name: b.get(f"{spec['scale_prefix']}_max") for name, spec in Settings.WAVES.items()}
-        chunks, x_start = [], p0
+        chunks, x_start, read_later = [], p0, False
         for c0, c1 in zip(chunk_starts, chunk_ends):
             f = next((i for i in range(c1, min(c1 + max_wait, len(frame_no))) if not abnormal[i]), None)
             img = _read_frame(frame_file(frame_no[f])) if f is not None else None
@@ -927,14 +978,19 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
                 continue
             chunk = _read_chunk(img, c0, c1, pen, u, wrap, scale_max)
             if f > c1:
+                read_later = True
                 gone = _redrawn(chunk["_sx"].to_numpy(int), c1, f, pen, wrap)
                 chunk.loc[gone, list(Settings.WAVES)] = np.nan
+                chunk.loc[gone, ["_clip", "_icon"]] = False
             chunks.append(chunk)
         xs = np.concatenate([c["_sx"].to_numpy(int) for c in chunks]) if chunks else np.array([], int)
         if len(xs) == 0:
             row["Alert"] = alerts
             pieces.append((row, None))
             continue
+        # 0.2.4: Alert Popup = a frame of the breath had a popup (what the app's capture shows), but the waveform was read
+        # (from the screen after it closed when its own image had it, read_later)
+        popup = "Abnormal" in alerts
         alerts = [a for a in alerts if a != "Abnormal"]   # the waveform was read from images without a popup
         wave = pd.concat(chunks, ignore_index=True)
         wave.insert(0, "X", np.arange(len(xs)) + int(round(u[x_start])) + 1)
@@ -972,8 +1028,9 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
             piece_alerts = [x for x in alerts if not (x == "Fragment" and ((k == 0 and i > 0) or (k == last_k and i < len(edges) - 2)))]
             if r["Wave_Missing"] > 0.3:
                 piece_alerts.append("Partial")   # screen was cleared (e.g. mode change) and part of the waveform is missing
-            if any(a <= o < z for o in rts):
-                piece_alerts.append("RT?")       # biphasic breath where the next inspiration came before full exhalation (e.g. Reverse Triggering)
+            # 0.2.4: no RT? Alert any more (the user tags asynchrony; biphasic breaths are still not split)
+            if popup:
+                piece_alerts.append("Popup")     # 0.2.4: read from an image after the popup over the waveforms closed
             r["Alert"] = piece_alerts
             pieces.append((r, wave.iloc[a:z].reset_index(drop=True)))
 
@@ -1027,11 +1084,16 @@ def extract_waves(df_frames, df_breaths, frames_root, output_dir, user_ID,
         r["BreathNumber"] = no
         r["Duration"] = round((int(r["End_Frame"]) - int(r["Frame"]) + 1) / fps, 2)
         r["Time"] = _format_time(int(r["Frame"]), fps)
+        if wave is not None and "_clip" in wave and wave["_clip"].fillna(False).astype(bool).any():
+            r["Alert"] = [*r["Alert"], "Clipped"]   # 0.2.4: a waveform reached the edge of its band; values beyond it are not on the screen
+        if r["Duration"] < SHORT_SEC and "Fragment" not in r["Alert"]:
+            r["Alert"] = [*r["Alert"], "Short"]   # 0.2.4: too short to be a breath (a boundary that could not be placed well)
+        r["Trigger"] = _trigger(wave, r["Alert"])
         r["Alert"] = ",".join(dict.fromkeys(r["Alert"]))
         if wave is not None:
             path = os.path.join(output_dir, f"{no}.csv")
             if overwrite or not os.path.exists(path):
-                wave.drop(columns=["_sx"], errors="ignore").to_csv(path, index=False)
+                wave.drop(columns=["_sx", "_clip", "_icon"], errors="ignore").to_csv(path, index=False)
             written += 1
         rows.append(r)
     df_out = _mark_merged(pd.DataFrame(rows))

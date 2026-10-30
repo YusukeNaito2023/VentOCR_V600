@@ -2,7 +2,7 @@
   "engine_key": "V600_ventocr",
   "display_name": "V600",
   "developer": "VentOCR Developer Team",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "ventocr_min": "0.6.2",
   "engine_api": 3,
   "description": "Draeger Savina 300 / V600 ventilator OCR engine. Breath = display update of VT. Waveforms: Pressure, Flow, Volume (filled curves) with wrap-around sweep tracked frame by frame; y-axis scale read by OCR.",
@@ -14,11 +14,12 @@
   "has_extract_waves": true,
   "output_columns": {
     "frames": ["Frame", "VT", "Sweep_X", "BreathMark"],
-    "breaths": ["BreathNumber", "VT", "Duration"]
+    "breaths": ["BreathNumber", "VT", "Duration", "Trigger"]
   },
 
-  "breath_summary": ["VT", "VT_displayed"],
+  "breath_summary": ["Trigger", "VT", "VT_displayed"],
   "labels": {
+    "Trigger": "Trigger (A: patient / C: machine / blank: unknown)",
     "VT_displayed": "VT (displayed)"
   },
 
@@ -30,15 +31,18 @@
     ],
     "breath_values": [
       { "name": "VT",           "label": "VT",             "unit": "mL" },
-      { "name": "VT_displayed", "label": "VT (displayed)", "unit": "mL" }
+      { "name": "VT_displayed", "label": "VT (displayed)", "unit": "mL" },
+      { "name": "Trigger",      "label": "Trigger (A: patient / C: machine / blank: unknown)" }
     ],
     "alerts": [
       { "name": "Fragment", "label": "Cut at the start or end of the recording", "exclude_from_accuracy": true },
       { "name": "Abnormal", "label": "Popup or other screen; no waveform could be read", "exclude_from_accuracy": true },
       { "name": "Long",     "label": "Longer than one sweep; earlier sweeps could not be read", "exclude_from_accuracy": false },
       { "name": "Partial",  "label": "More than 30% of the waveform missing (screen cleared, etc.)", "exclude_from_accuracy": true },
-      { "name": "RT?",      "label": "Biphasic breath: next inspiration before full expiration (e.g. reverse triggering)", "exclude_from_accuracy": false },
-      { "name": "Merged?",  "label": "At least 1.7x the neighbouring breaths (possibly two breaths merged)", "exclude_from_accuracy": true }
+      { "name": "Merged?",  "label": "At least 1.7x the neighbouring breaths (possibly two breaths merged)", "exclude_from_accuracy": true },
+      { "name": "Popup",    "label": "Popup over the waveforms; waveform read from the screen after it closed", "exclude_from_accuracy": false },
+      { "name": "Clipped",  "label": "Waveform reaches the edge of its band (values beyond the axis are not on the screen)", "exclude_from_accuracy": false },
+      { "name": "Short",    "label": "Shorter than 0.5 s (boundary could not be placed well)", "exclude_from_accuracy": false }
     ]
   },
 
