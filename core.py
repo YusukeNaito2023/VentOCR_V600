@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 from . import Settings
 
-ENGINE_VERSION = "0.2.5"
+ENGINE_VERSION = "0.2.6"
 VENTOCR_TESTED = "0.5.5"
 
 ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -477,6 +477,18 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
           f"{int(sw['wrap'].sum())} wraps, speed {np.nanmedian(sw['speed']) * fps:.1f} px/s")
 
     # --- Per-breath table ---
+    # 0.2.6: VT values are taken between display updates: segment j = frames [update j-1, update j) (segment 0 = before the first
+    # update), i.e. the value shown after update j-1. A breath whose own update is i shows segment i+1 (VT_displayed) and its value
+    # is segment i+2 (VT). Up to 0.2.5 they were the mode over the breath's frames and the next breath's frames, which start
+    # boundary_shift_sec before the update: when the next update came within about 2 s, the old value had as many frames and won
+    # (fast spontaneous breathing: a displayed value was dropped and the VT of the following breaths shifted by one)
+    seg_edges = [0, *updates, n]
+    vis_rows = (df["VT_Visible"] == 1).to_numpy()
+    seg_visible = [df.iloc[a:z][vis_rows[a:z]] for a, z in zip(seg_edges[:-1], seg_edges[1:])]
+    own_update = {}   # breath start (row) -> index of its own update (the last one if several were clipped to the same start)
+    for i, u in enumerate(updates):
+        own_update[min(max(u + shift, 0), n - 1)] = i
+
     rows = []
     last_scale = {}   # vertical-axis max of the previous breath (breaths that could not be read carry this over)
     groups = list(df.groupby("BreathNumber", sort=True))
@@ -485,8 +497,9 @@ def post_ocr(df, Analyze_Id, user_ID, settings={}):
         normal = g[g["Abnormal"] == 0]
         nxt = groups[k + 1][1] if k + 1 < len(groups) else None
         # VT values come from the frames where the VT label is visible (0.2.3; includes popups over the waveforms)
-        visible = g[g["VT_Visible"] == 1]
-        nxt_visible = nxt[nxt["VT_Visible"] == 1] if nxt is not None else None
+        seg = own_update.get(s, -1) + 1
+        visible = seg_visible[seg]
+        nxt_visible = seg_visible[seg + 1] if nxt is not None and seg + 1 < len(seg_visible) else None
         row = {
             "BreathNumber": int(no),
             "Frame": int(df.at[s, "Frame"]),

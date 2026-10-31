@@ -29,7 +29,9 @@
   - A breath longer than one sweep is read from one image per sweep (the last frame before each return to the left edge), so it can be split too (0.2.2)
   - Breath numbers are reassigned in time order (BreathNumber in Frames.csv is updated to match)
 - **OCR**: VT (leak-compensated). The on-screen VT is the value of the "previous breath", so `VT` in Breaths.csv is the value displayed during the next breath,
-  and `VT_displayed` is the value that was displayed during that breath
+  and `VT_displayed` is the value that was displayed during that breath. Both are taken between display updates (0.2.6): `VT_displayed` = the value
+  shown from the breath's own update to the next one, `VT` = the value shown from the next update to the one after it (the breath's frames
+  start `boundary_shift_sec` before its update, so in fast breathing they hold mostly the previous value)
 - **Trigger** (0.2.4): `Trigger` in Breaths.csv = `A` (patient-triggered) / `C` (machine) / blank (unknown). The V600 draws a lung icon
   just below the airway pressure band, centred on the inspiratory onset, at each patient-triggered breath (rows 305-330; dark in the day
   theme, light in Night Mode). A = an icon in the first 20 columns of the breath's waveform; blank = no waveform, the first or last

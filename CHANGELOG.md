@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## 0.2.6 (2026-10-31)
+- `VT` and `VT_displayed` are taken between display updates: `VT_displayed` = the value shown from the breath's own update to the next one,
+  `VT` = the value shown from the next update to the one after it. Up to 0.2.5 they were the most frequent value over the breath's frames
+  and over the next breath's frames, which start `boundary_shift_sec` (1 s) before the update. When the next update came within about 2 s,
+  the previous value had as many frames and won: in fast spontaneous breathing a displayed value was dropped and the VT of the following
+  breaths shifted by one (external review of the 2026-10-27 recording: BN 275, 286, 292, 293, 298, 299, 300; also 295-297)
+- Only `VT` / `VT_displayed` change, and only where an update follows the previous one within about 2 s. Boundaries, waveforms, Trigger and
+  alerts are unchanged
+
 ## 0.2.5 (2026-10-31)
 Text only; analysis results are the same as 0.2.4.
 - Alert `Popup` description now says where the waveforms come from: "Popup over the waveforms; all three waveforms were read from the screen after it closed (the first frame without it)"
