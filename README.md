@@ -56,7 +56,8 @@ See `layout.jpg` (red boxes: OCR, green boxes: waveform bands, red lines: baseli
   (not set on breaths whose waveform was examined, since those are already split; remaining long breaths have a single inspiration followed by apnea)
 - `Abnormal`: a popup or another screen, and no image without it showed the breath's waveform (no waveform is output). 0.2.3: breaths read
   from a later image have no `Abnormal` Alert (the `Abnormal` column of Breaths.csv still says whether any frame had a popup)
-- `Popup` (0.2.4): a popup was shown over the waveforms during the breath; its waveform was read from the screen after the popup closed
+- `Popup` (0.2.4): a popup was shown over the waveforms during the breath; all three waveforms (Paw included) were read from the screen after
+  the popup closed (the first frame without it), not from the breath's own frames. The capture the app shows for the breath still has the popup
   (the trace keeps being drawn under the popup). Not excluded from accuracy
 - `Clipped` (0.2.4): a waveform reaches the edge of its band (or the label at the top of the band), so values beyond the axis are not on
   the screen (e.g. Volume above 500 mL with the 500 mL axis). VT is read from the number and is not affected. Not excluded from accuracy

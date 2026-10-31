@@ -2,7 +2,7 @@
   "engine_key": "V600_ventocr",
   "display_name": "V600",
   "developer": "VentOCR Developer Team",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "ventocr_min": "0.6.2",
   "engine_api": 3,
   "description": "Draeger Savina 300 / V600 ventilator OCR engine. Breath = display update of VT. Waveforms: Pressure, Flow, Volume (filled curves) with wrap-around sweep tracked frame by frame; y-axis scale read by OCR.",
@@ -40,7 +40,7 @@
       { "name": "Long",     "label": "Longer than one sweep; earlier sweeps could not be read", "exclude_from_accuracy": false },
       { "name": "Partial",  "label": "More than 30% of the waveform missing (screen cleared, etc.)", "exclude_from_accuracy": true },
       { "name": "Merged?",  "label": "At least 1.7x the neighbouring breaths (possibly two breaths merged)", "exclude_from_accuracy": true },
-      { "name": "Popup",    "label": "Popup over the waveforms; waveform read from the screen after it closed", "exclude_from_accuracy": false },
+      { "name": "Popup",    "label": "Popup over the waveforms; all three waveforms were read from the screen after it closed (the first frame without it)", "exclude_from_accuracy": false },
       { "name": "Clipped",  "label": "Waveform reaches the edge of its band (values beyond the axis are not on the screen)", "exclude_from_accuracy": false },
       { "name": "Short",    "label": "Shorter than 0.5 s (boundary could not be placed well)", "exclude_from_accuracy": false }
     ]

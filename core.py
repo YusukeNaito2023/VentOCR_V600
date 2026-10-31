@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 from . import Settings
 
-ENGINE_VERSION = "0.2.4"
+ENGINE_VERSION = "0.2.5"
 VENTOCR_TESTED = "0.5.5"
 
 ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -576,7 +576,8 @@ def extract_column_values(frame, xs, scale_max=None):
             ys = np.flatnonzero(sub[:, c])
             up, dn = ys[ys < zero], ys[ys > zero]
             # 0.2.4 Clipped: the fill goes beyond the axis max / min line (the V600 stops drawing just past it, e.g. Volume at 508
-            # with the 500 axis), or reaches the label excluded at the top of the band (Volume 433 under "ボリューム mL")
+            # with the 500 axis), or reaches the label excluded at the top of the band (Volume 433 under the "Volume mL" label,
+            # shown in Japanese on this screen)
             # Only a solid fill from the baseline counts (at least 90% of the rows in between): in Night Mode the edge of a label or
             # the "Leak compensation" banner and the dotted lines at the top of a band pass the colour test but are separate from it
             # A run of at least 3 px: a lone antialiased pixel next to the baseline (Volume, whose axis bottom is the baseline) is not a clip

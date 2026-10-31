@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 0.2.5 (2026-10-31)
+Text only; analysis results are the same as 0.2.4.
+- Alert `Popup` description now says where the waveforms come from: "Popup over the waveforms; all three waveforms were read from the screen after it closed (the first frame without it)"
+  (comment BN 4: Flow and Volume were charted although the popup covered them in the breath's capture)
+- A code comment no longer contains Japanese (engine text is English only)
+
 ## 0.2.4 (2026-10-30)
 Addresses the user's breath comments on the 0.2.3 analysis of the 2026-10-27 recording. Breath boundaries, VT and waveforms are unchanged.
 - New Breaths.csv column `Trigger` (A: patient-triggered / C: machine / blank: unknown), declared in outputs.breath_values. The V600 draws a
